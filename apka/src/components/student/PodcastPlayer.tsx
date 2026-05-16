@@ -53,15 +53,12 @@ function Waveform({ isPlaying, speaker }: { isPlaying: boolean; speaker: Podcast
         <motion.div
           key={i}
           className="w-[3px] rounded-full"
-          style={{ background: conf.wave, originY: 1, height: `${h}px` }}
-          animate={isPlaying
-            ? {
-                scaleY: [0.2, 1, 0.35, 0.8, 0.15, 1, 0.5],
-                opacity: [0.7, 1, 0.8, 1, 0.6, 1, 0.9],
-              }
-            : { scaleY: 0.12, opacity: 0.35 }
-          }
-          initial={{ scaleY: 0.12 }}
+          style={{ background: conf.wave, transformOrigin: 'bottom', height: `${h}px` }}
+          animate={{
+            scaleY: isPlaying ? [0.2, 1, 0.35, 0.8, 0.15, 1, 0.5] : 0.12,
+            opacity: isPlaying ? [0.7, 1, 0.8, 1, 0.6, 1, 0.9] : 0.35,
+          }}
+          initial={{ scaleY: 0.12, opacity: 0.35 }}
           transition={{
             duration: 0.6 + (i % 5) * 0.11,
             repeat: isPlaying ? Infinity : 0,
@@ -75,6 +72,7 @@ function Waveform({ isPlaying, speaker }: { isPlaying: boolean; speaker: Podcast
 }
 
 function formatTime(s: number) {
+  if (isNaN(s)) return '0:00'
   const m = Math.floor(s / 60)
   return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 }
