@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Play, Pause, Mic2, RotateCcw, Radio } from 'lucide-react'
+import { Play, Pause, RotateCcw, Radio } from 'lucide-react'
 import type { PodcastTurn } from '@/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ function Waveform({ isPlaying, speaker }: { isPlaying: boolean; speaker: Podcast
         <motion.div
           key={i}
           className="w-[3px] rounded-full"
-          style={{ background: conf.wave }}
+          style={{ background: conf.wave, originY: 1, height: `${h}px` }}
           animate={isPlaying
             ? {
                 scaleY: [0.2, 1, 0.35, 0.8, 0.15, 1, 0.5],
@@ -61,8 +61,7 @@ function Waveform({ isPlaying, speaker }: { isPlaying: boolean; speaker: Podcast
               }
             : { scaleY: 0.12, opacity: 0.35 }
           }
-          initial={{ scaleY: 0.12, originY: 1 }}
-          style={{ background: conf.wave, originY: 1, height: `${h}px` }}
+          initial={{ scaleY: 0.12 }}
           transition={{
             duration: 0.6 + (i % 5) * 0.11,
             repeat: isPlaying ? Infinity : 0,
