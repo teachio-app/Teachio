@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { getMaterials, deleteMaterial, type SavedMaterial } from '@/lib/actions/materials'
+import {
+  getMaterials, deleteMaterial, getStudentNotes, deleteStudentNote,
+  type SavedMaterial, type SavedStudentNote,
+} from '@/lib/actions/materials'
 
 const SUBJECT_COLORS: Record<string, string> = {
   history: 'bg-amber-100 text-amber-800 border-amber-200',
@@ -110,15 +113,114 @@ function MaterialCard({ item, onDelete }: { item: SavedMaterial; onDelete: () =>
   )
 }
 
+// ── Student note card ─────────────────────────────────────────────────────────
+
+function StudentNoteCard({ item, onDelete }: { item: SavedStudentNote; onDelete: () => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    await deleteStudentNote(item.id)
+    onDelete()
+  }
+
+  const n = item.notes_data
+  const LEVEL_COLOR: Record<string, string> = {
+    ZŠ: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    SŠ: 'bg-blue-100 text-blue-800 border-blue-200',
+    VŠ: 'bg-violet-100 text-violet-800 border-violet-200',
+  }
+
+  return (
+    <motion.div layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.3 }}
+      className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
+    >
+      <div className="flex items-start justify-between gap-4 px-5 py-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-indigo-50 text-indigo-700 border-indigo-200">
+              🎓 Zápisky
+            </span>
+            <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${LEVEL_COLOR[item.level] ?? LEVEL_COLOR.SŠ}`}>
+              {item.level}
+            </span>
+          </div>
+          <h3 className="font-semibold text-slate-900 text-base truncate">{item.topic}</h3>
+          <p className="text-xs text-slate-400 mt-0.5">{formatDate(item.created_at)}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => setExpanded(e => !e)}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
+            {expanded ? 'Skrýt ↑' : 'Zobrazit ↓'}
+          </button>
+          <button onClick={handleDelete} disabled={deleting}
+            className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:border-red-300 hover:text-red-500 hover:bg-red-50 transition-all disabled:opacity-50">
+            {deleting ? '…' : '✕'}
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3 }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="border-t border-slate-100 px-5 py-4 space-y-4">
+              {n?.introduction && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">📌 Úvod</p>
+                  <p className="text-sm text-slate-700 leading-relaxed">{n.introduction}</p>
+                </div>
+              )}
+              {n?.tl_dr && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">⚡ TL;DR</p>
+                  <p className="text-sm text-slate-700 leading-relaxed">{n.tl_dr}</p>
+                </div>
+              )}
+              {n?.exam_traps && n.exam_traps.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">⚠️ Chytáky ke zkoušce</p>
+                  <div className="space-y-1.5">
+                    {n.exam_traps.map((trap, i) => (
+                      <p key={i} className="text-xs text-slate-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-relaxed">{trap}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+
 export default function ProfilPage() {
-  const [materials, setMaterials] = useState<SavedMaterial[]>([])
-  const [loading, setLoading] = useState(true)
+  const [materials,    setMaterials]    = useState<SavedMaterial[]>([])
+  const [studentNotes, setStudentNotes] = useState<SavedStudentNote[]>([])
+  const [loading,      setLoading]      = useState(true)
 
   useEffect(() => {
-    getMaterials().then(d => { setMaterials(d); setLoading(false) })
+    Promise.all([getMaterials(), getStudentNotes()]).then(([m, n]) => {
+      setMaterials(m)
+      setStudentNotes(n)
+      setLoading(false)
+    })
   }, [])
 
-  const remove = (id: string) => setMaterials(m => m.filter(x => x.id !== id))
+  const removeLesson = (id: string) => setMaterials(m => m.filter(x => x.id !== id))
+  const removeNote   = (id: string) => setStudentNotes(n => n.filter(x => x.id !== id))
+
+  const hasTeacherContent = materials.length > 0
+  const hasStudentContent = studentNotes.length > 0
+  const hasAnything       = hasTeacherContent || hasStudentContent
 
   // Stats
   const subjectCounts = materials.reduce<Record<string, number>>((acc, m) => {
@@ -135,12 +237,11 @@ export default function ProfilPage() {
       </div>
 
       {/* Stats */}
-      {materials.length > 0 && (
+      {hasAnything && !loading && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          {[
-            { label: 'Celkem vygenerováno', value: materials.length, icon: '📋' },
+          {hasTeacherContent && [
+            { label: 'Plány hodin', value: materials.length, icon: '📋' },
             { label: 'Nejčastější předmět', value: topSubject?.[0] ?? '–', icon: '🏆' },
-            { label: 'Různých témat', value: new Set(materials.map(m => m.topic)).size, icon: '✨' },
           ].map(s => (
             <div key={s.label} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
               <p className="text-2xl mb-1">{s.icon}</p>
@@ -148,28 +249,56 @@ export default function ProfilPage() {
               <p className="text-xs text-slate-500 mt-0.5">{s.label}</p>
             </div>
           ))}
+          {hasStudentContent && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+              <p className="text-2xl mb-1">🎓</p>
+              <p className="text-xl font-bold text-slate-900">{studentNotes.length}</p>
+              <p className="text-xs text-slate-500 mt-0.5">Studijní zápisky</p>
+            </div>
+          )}
         </div>
       )}
 
-      {/* List */}
       {loading ? (
         <div className="space-y-3 animate-pulse">
           {[0,1,2].map(i => <div key={i} className="h-20 bg-white rounded-2xl border border-slate-200" />)}
         </div>
-      ) : materials.length === 0 ? (
+      ) : !hasAnything ? (
         <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 border-dashed">
           <p className="text-4xl mb-3">📂</p>
           <p className="text-slate-700 font-medium">Zatím žádné materiály</p>
-          <p className="text-slate-400 text-sm mt-1">Vygenerujte svůj první plán hodiny v sekci Generátor.</p>
+          <p className="text-slate-400 text-sm mt-1">Vygenerujte plán hodiny nebo zápisky.</p>
         </div>
       ) : (
-        <motion.div layout className="space-y-3">
-          <AnimatePresence mode="popLayout">
-            {materials.map(m => (
-              <MaterialCard key={m.id} item={m} onDelete={() => remove(m.id)} />
-            ))}
-          </AnimatePresence>
-        </motion.div>
+        <div className="space-y-8">
+          {/* Teacher lessons */}
+          {hasTeacherContent && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">📋 Plány hodin</h2>
+              <motion.div layout className="space-y-3">
+                <AnimatePresence mode="popLayout">
+                  {materials.map(m => (
+                    <MaterialCard key={m.id} item={m} onDelete={() => removeLesson(m.id)} />
+                  ))}
+                </AnimatePresence>
+              </motion.div>
+            </div>
+          )}
+
+          {/* Student notes */}
+          {hasStudentContent && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">🎓 Studijní zápisky</h2>
+              <motion.div layout className="space-y-3">
+                <AnimatePresence mode="popLayout">
+                  {studentNotes.map(n => (
+                    <StudentNoteCard key={n.id} item={n} onDelete={() => removeNote(n.id)} />
+                  ))}
+                </AnimatePresence>
+              </motion.div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

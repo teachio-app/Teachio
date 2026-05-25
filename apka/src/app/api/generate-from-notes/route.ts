@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import type { SmartNotes, StudyModule, QuizQuestion, PodcastTurn, StudyLevel, ExamGoal } from '@/types'
-import { tryUseCredit } from '@/lib/actions/credits'
+import { tryUseCredit, trackCreditUsed } from '@/lib/actions/credits'
 import { buildLangDirective } from '@/lib/i18n/langDirective'
 import { TEACHIO_IDENTITY } from '@/lib/teachioIdentity'
 
@@ -58,6 +58,8 @@ ZÁKON — KVÍZ (testuje opravený/ověřený obsah)
 Otázky testují témata ze zápisků — ale s OPRAVENÝMI fakty.
 Pokud zápisky měly chybu, kvíz testuje správnou verzi (ne chybnou).
 Distraktory = věrohodné záměny vyvratelné správnými fakty.
+explanation_why_correct MUSÍ používat PŘESNÝ TEXT z pole options — žádná jiná slova.
+Formát: "Správně je '[přesný text správné možnosti]', protože [důvod]. '[přesný text špatné]' je špatně, protože [důvod]."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ZÁKON — PODCAST SKRIPT (virální radio show)
@@ -159,38 +161,14 @@ Na základě těchto zápisků vrať VÝHRADNĚ tento JSON:
     { "question": "...", "options": ["...","...","...","..."], "correct_index": 0, "explanation_why_correct": "..." }
   ],
   "podcast_script": [
-    {
-      "speaker": "teacher",
-      "text": "Učitelka spustí výbušně — bez formálního uvítání. Překvapivý fakt nebo šokující detail z prvního tématu zápisků (2–3 věty). Styl: 'Hele, víš co je na [tématu ze zápisků] úplně šílené? [překvapivý fakt]. Vlastně — nejdřív musím říct, proč mě to tak fascinuje.'"
-    },
-    {
-      "speaker": "student",
-      "text": "Student reaguje emotivně a přerušuje: 'Hmm — moment. Takže ty říkáš, že [parafráze prvního tématu vlastními slovy]?! To jsem vůbec nevěděl. Je to jako... [moderní analogie ze světa studenta — gaming, TikTok, Netflix, AI]? A proč vlastně [doplňující otázka]?'"
-    },
-    {
-      "speaker": "teacher",
-      "text": "Učitelka potvrdí s energií a přidá detail: 'Přesně! A to je to, co většina lidí nechápe — [klíčový detail prvního tématu, 2–3 věty]. Tohle mě taky dostalo, když jsem to poprvé slyšela. OK, a teď to eskaluje —' [plynně přejde k druhému tématu ze zápisků]."
-    },
-    {
-      "speaker": "student",
-      "text": "Student přerušuje s nadšením: 'Jo, ale moment — [rekapitulace druhého tématu vlastními slovy]? Takže to funguje jako [druhá moderní analogie]? Aha... ale pak nechápu, proč [doplňující otázka k druhému tématu].'"
-    },
-    {
-      "speaker": "teacher",
-      "text": "Učitelka odpoví a přidá praktický příklad z reálného světa (2–3 věty). Pak: 'A tady je ta část, kvůli které tohle stojí za to vědět: [propojení prvního a druhého tématu ze zápisků]. To nás vede k [třetí téma ze zápisků nebo závěrečný poznatek].'"
-    },
-    {
-      "speaker": "student",
-      "text": "Student reaguje s překvapením nebo lehkým šokem: 'Ne vážně?! To chceš říct, že [rekapitulace klíčového propojení]? OK tohle mi vyrazilo dech. Takže v praxi to znamená, že [aplikace poznatku]? Hele — [závěrečná otázka nebo past, na kterou by student mohl naletět].'"
-    },
-    {
-      "speaker": "teacher",
-      "text": "Učitelka uzavře s poselstvím: '[odpověď na závěrečnou otázku, 1–2 věty]. A víš, co je na celém tématu [název tématu ze zápisků] nejdůležitější? [klíčové poselství — stručně a razantně, jako pointy stand-up comedy]. Zapamatuj si tohle.'"
-    },
-    {
-      "speaker": "student",
-      "text": "Student uzavře přirozeně: 'Jo, teď mi to konečně dává smysl. Takže kdybych to měl říct kamarádovi za 10 sekund — [finální parafrázování klíčového poselství vlastními slovy, hovorově]. Tohle je přesně ten typ věcí, co bych chtěl vědět před zkouškou.'"
-    }
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." },
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." },
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." },
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." }
   ],
   "flashcards": [
     { "term": "Pojem 1 ze zápisků", "definition": "Přesná definice nebo vysvětlení pojmu 1" },
@@ -296,7 +274,7 @@ export async function POST(req: NextRequest) {
     if (user) {
       authedUserId = user.id
       const creditResult = await tryUseCredit(user.id)
-      if (creditResult === 'no_credits') {
+      if (creditResult !== 'ok') {
         return NextResponse.json({ error: 'insufficient_credits' }, { status: 403 })
       }
     }
@@ -344,6 +322,23 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Credit already atomically deducted above
+  if (authedUserId) trackCreditUsed(authedUserId).catch(() => {})
+
+  // Save to student_notes history — topic derived from AI introduction or truncated input
+  if (authedUserId) {
+    try {
+      const { supabaseAdmin } = await import('@/lib/supabase/admin')
+      const topic = notes.introduction
+        ? notes.introduction.slice(0, 60).replace(/\s+\S*$/, '…')
+        : userNotes.trim().slice(0, 50).replace(/\s+\S*$/, '…')
+      const { data: saved } = await supabaseAdmin
+        .from('student_notes')
+        .insert({ user_id: authedUserId, topic, level, notes_data: notes, raw_text: userNotes.trim().slice(0, 100_000) })
+        .select('id')
+        .single()
+      if (saved?.id) return NextResponse.json({ ...notes, _note_id: saved.id })
+    } catch { /* table columns not yet migrated — continue without saving */ }
+  }
+
   return NextResponse.json(notes)
 }

@@ -129,6 +129,24 @@
   box-shadow: 0 1px 0 rgba(139, 92, 246, 0.08), 0 2px 12px rgba(0, 0, 0, 0.04);
 }
 
+/* Dark header — student (purple accent) */
+.dark-header {
+  background: rgba(6, 6, 15, 0.90);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 0 rgba(124, 58, 237, 0.12);
+}
+
+/* Dark header — teacher (blue accent) */
+.dark-header-blue {
+  background: rgba(6, 8, 15, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(37, 99, 235, 0.18);
+  box-shadow: 0 1px 0 rgba(37, 99, 235, 0.10);
+}
+
 /* ── Gradient text ───────────────────────────────────────────────────────────── */
 
 .gradient-text {

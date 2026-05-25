@@ -25,24 +25,23 @@ const SPEAKERS = {
   teacher: {
     emoji:  '👩‍🏫',
     label:  'Učitelka',
-    color:  '#db2777',
-    bg:     'rgba(219,39,119,0.10)',
-    border: 'rgba(219,39,119,0.30)',
+    color:  '#f472b6',
+    bg:     'rgba(219,39,119,0.15)',
+    border: 'rgba(219,39,119,0.40)',
     wave:   'linear-gradient(to top,#db2777,#f472b6)',
   },
   student: {
     emoji:  '👨‍🎓',
     label:  'Student',
-    color:  '#6366f1',
-    bg:     'rgba(99,102,241,0.10)',
-    border: 'rgba(99,102,241,0.30)',
+    color:  '#818cf8',
+    bg:     'rgba(99,102,241,0.15)',
+    border: 'rgba(99,102,241,0.40)',
     wave:   'linear-gradient(to top,#6366f1,#a78bfa)',
   },
 } as const
 
 // ── Animated waveform ──────────────────────────────────────────────────────────
 
-// Asymmetric bar heights for a more organic, realistic waveform look
 const BAR_HEIGHTS = [6, 14, 9, 24, 11, 20, 7, 28, 13, 18, 22, 10, 26, 8, 19, 15, 25, 9, 21, 12, 17, 7, 23, 11]
 
 function Waveform({ isPlaying, speaker }: { isPlaying: boolean; speaker: PodcastTurn['speaker'] }) {
@@ -72,7 +71,7 @@ function Waveform({ isPlaying, speaker }: { isPlaying: boolean; speaker: Podcast
 }
 
 function formatTime(s: number) {
-  if (isNaN(s)) return '0:00'
+  if (isNaN(s) || !isFinite(s)) return '0:00'
   const m = Math.floor(s / 60)
   return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 }
@@ -86,10 +85,58 @@ export function PodcastPlayer({ podcast_script }: Props) {
   const [isPlaying,   setIsPlaying]   = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [turnDuration,setTurnDuration]= useState(0)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  // Revoke blob URLs on unmount
-  useEffect(() => () => { turns.forEach(t => URL.revokeObjectURL(t.url)) }, [turns])
+  // Persistent audio element — created once, src is swapped per turn.
+  // This is critical for iOS: we play() synchronously in the click handler
+  // to unlock the element, then reuse it for async-loaded audio.
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const blobUrls = useRef<string[]>([])
+
+  // Create the persistent audio element on mount
+  useEffect(() => {
+    const el = new Audio()
+    audioRef.current = el
+
+    el.addEventListener('loadedmetadata', () => setTurnDuration(el.duration))
+    el.addEventListener('timeupdate',     () => setCurrentTime(el.currentTime))
+    el.addEventListener('play',           () => setIsPlaying(true))
+    el.addEventListener('pause',          () => setIsPlaying(false))
+    el.addEventListener('ended', () => {
+      setCurrentIdx(prev => {
+        const next = prev + 1
+        return next  // useEffect below advances playback
+      })
+    })
+
+    return () => {
+      el.pause()
+      el.src = ''
+      // Revoke all blob URLs
+      blobUrls.current.forEach(u => URL.revokeObjectURL(u))
+    }
+  }, [])
+
+  // Advance playback when currentIdx changes (after 'ended' event)
+  useEffect(() => {
+    const el = audioRef.current
+    if (!el || !isPlaying) return
+    if (currentIdx >= turns.length) {
+      // All turns played
+      setIsPlaying(false)
+      setCurrentIdx(0)
+      setCurrentTime(0)
+      return
+    }
+    if (turns[currentIdx]) {
+      setCurrentTime(0)
+      el.src = turns[currentIdx].url
+      el.load()
+      el.play().catch(err => {
+        console.error('[PodcastPlayer] play() failed on turn advance:', err)
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIdx])
 
   // ── Fetch all audio in one request ─────────────────────────────────────────
 
@@ -107,79 +154,83 @@ export function PodcastPlayer({ podcast_script }: Props) {
       }
       const data = await res.json()
 
+      // Revoke previous blob URLs
+      blobUrls.current.forEach(u => URL.revokeObjectURL(u))
+      blobUrls.current = []
+
       const playable: PlayableTurn[] = (data.turns as { speaker: PodcastTurn['speaker']; audioBase64: string }[])
+        .filter(t => t.audioBase64)
         .map((t, i) => {
-          // base64 → Blob → object URL
           const bytes = Uint8Array.from(atob(t.audioBase64), c => c.charCodeAt(0))
           const blob  = new Blob([bytes], { type: 'audio/mpeg' })
+          const url   = URL.createObjectURL(blob)
+          blobUrls.current.push(url)
           return {
             speaker: t.speaker,
             text:    podcast_script[i]?.text ?? '',
-            url:     URL.createObjectURL(blob),
+            url,
           }
         })
-        .filter(t => t.url)   // skip empty turns
+
+      if (playable.length === 0) throw new Error('No audio turns returned')
 
       setTurns(playable)
       setCurrentIdx(0)
       setStatus('ready')
-      setIsPlaying(true)   // auto-play after loading
+
+      // Play first turn — audioRef was already unlocked synchronously in togglePlay
+      const el = audioRef.current
+      if (el) {
+        setCurrentTime(0)
+        el.src = playable[0].url
+        el.load()
+        el.play().catch(err => {
+          console.error('[PodcastPlayer] auto-play after load failed:', err)
+          // Not fatal — user can tap play again
+        })
+      }
     } catch (err) {
       console.error('[PodcastPlayer] Failed:', err)
       setStatus('error')
+      setIsPlaying(false)
     }
   }, [podcast_script])
-
-  // ── Sequential playback effect ─────────────────────────────────────────────
-  // Runs when isPlaying toggles or the turn index advances.
-  // Cleanup pauses the audio so toggle-pause works mid-turn.
-
-  useEffect(() => {
-    if (!isPlaying || !turns[currentIdx]) return
-
-    const audio = new Audio(turns[currentIdx].url)
-    audioRef.current = audio
-
-    audio.addEventListener('loadedmetadata', () => setTurnDuration(audio.duration))
-    audio.addEventListener('timeupdate',     () => setCurrentTime(audio.currentTime))
-
-    const onEnded = () => {
-      const next = currentIdx + 1
-      if (next < turns.length) {
-        setCurrentTime(0)
-        setCurrentIdx(next)      // triggers re-run for next turn
-      } else {
-        setIsPlaying(false)
-        setCurrentIdx(0)
-        setCurrentTime(0)
-      }
-    }
-
-    audio.addEventListener('ended', onEnded)
-    audio.play().catch(console.error)
-
-    return () => {
-      audio.removeEventListener('ended', onEnded)
-      audio.pause()
-      audioRef.current = null
-    }
-  }, [currentIdx, isPlaying, turns])
 
   // ── Controls ────────────────────────────────────────────────────────────────
 
   const togglePlay = () => {
+    const el = audioRef.current
+    if (!el) return
+
     if (status === 'idle' || status === 'error') {
+      // iOS unlock: call play() synchronously within the user gesture.
+      // We immediately pause — this just primes the audio element.
+      el.play().then(() => el.pause()).catch(() => {})
       fetchPodcast()
     } else if (status === 'ready') {
-      setIsPlaying(p => !p)
+      if (isPlaying) {
+        el.pause()
+      } else {
+        if (el.src && el.src !== window.location.href) {
+          el.play().catch(console.error)
+        } else if (turns[currentIdx]) {
+          el.src = turns[currentIdx].url
+          el.load()
+          el.play().catch(console.error)
+        }
+      }
     }
   }
 
   const restart = () => {
-    setIsPlaying(false)
+    const el = audioRef.current
+    if (!el || turns.length === 0) return
+    el.pause()
     setCurrentIdx(0)
     setCurrentTime(0)
-    setTimeout(() => setIsPlaying(true), 80)
+    el.src = turns[0].url
+    el.load()
+    el.play().catch(console.error)
   }
 
   // Overall progress: which turn we're on + within-turn progress
@@ -187,27 +238,27 @@ export function PodcastPlayer({ podcast_script }: Props) {
     ? ((currentIdx + (turnDuration > 0 ? currentTime / turnDuration : 0)) / turns.length) * 100
     : 0
 
-  const currentTurn = turns[currentIdx]
+  const currentTurn = turns[currentIdx] ?? turns[0]
   const speakerConf = currentTurn ? SPEAKERS[currentTurn.speaker] : null
 
   return (
     <div
       className="rounded-2xl overflow-hidden"
       style={{
-        background: 'linear-gradient(135deg,rgba(219,39,119,0.05),rgba(99,102,241,0.05))',
-        border: '1.5px solid rgba(99,102,241,0.18)',
-        boxShadow: '0 4px 20px rgba(109,40,217,0.08)',
+        background: 'rgba(255,255,255,0.03)',
+        border: '1.5px solid rgba(99,102,241,0.20)',
+        boxShadow: '0 4px 24px rgba(99,102,241,0.12)',
       }}
     >
       {/* Header bar */}
       <div
         className="flex items-center gap-2.5 px-5 py-3"
-        style={{ borderBottom: '1px solid rgba(99,102,241,0.10)', background: 'rgba(99,102,241,0.04)' }}
+        style={{ borderBottom: '1px solid rgba(99,102,241,0.12)', background: 'rgba(99,102,241,0.06)' }}
       >
-        <Radio className="w-4 h-4 text-indigo-500" strokeWidth={2} />
-        <span className="text-sm font-bold text-slate-800">Výukový podcast</span>
+        <Radio className="w-4 h-4" style={{ color: '#818cf8' }} strokeWidth={2} />
+        <span className="text-sm font-bold" style={{ color: '#e2e8f0' }}>Výukový podcast</span>
 
-        {/* ON AIR badge — shows while playing */}
+        {/* ON AIR badge */}
         <AnimatePresence>
           {isPlaying && (
             <motion.div
@@ -215,20 +266,20 @@ export function PodcastPlayer({ podcast_script }: Props) {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
-              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)' }}
+              style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.30)' }}
             >
               <motion.div
                 animate={{ opacity: [1, 0.2, 1] }}
                 transition={{ duration: 0.9, repeat: Infinity }}
                 className="w-1.5 h-1.5 rounded-full bg-red-500"
               />
-              <span className="text-xs font-bold tracking-widest" style={{ color: '#dc2626' }}>ON AIR</span>
+              <span className="text-xs font-bold tracking-widest" style={{ color: '#f87171' }}>ON AIR</span>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <span className="text-xs text-slate-400 ml-auto">
-          {status === 'ready' ? `${podcast_script.length} replik` : '2 mluvčí · 3–5 min'}
+        <span className="text-xs ml-auto" style={{ color: '#475569' }}>
+          {status === 'ready' ? `${turns.length} replik` : '2 mluvčí · 3–5 min'}
         </span>
       </div>
 
@@ -246,9 +297,9 @@ export function PodcastPlayer({ podcast_script }: Props) {
                 transition={{ duration: 1.4, repeat: isActive ? Infinity : 0, ease: 'easeInOut' }}
                 className="flex items-center gap-2 px-3.5 py-2 rounded-full text-sm font-semibold transition-all"
                 style={{
-                  background:  isActive ? conf.bg    : 'rgba(255,255,255,0.4)',
-                  border:      `1.5px solid ${isActive ? conf.border : 'rgba(255,255,255,0.6)'}`,
-                  color:       isActive ? conf.color  : '#94a3b8',
+                  background:  isActive ? conf.bg    : 'rgba(255,255,255,0.05)',
+                  border:      `1.5px solid ${isActive ? conf.border : 'rgba(255,255,255,0.10)'}`,
+                  color:       isActive ? conf.color  : '#64748b',
                   boxShadow:   isActive ? `0 4px 16px ${conf.border}` : 'none',
                 }}
               >
@@ -268,7 +319,7 @@ export function PodcastPlayer({ podcast_script }: Props) {
 
           {/* Turn counter */}
           {status === 'ready' && (
-            <span className="ml-auto text-xs font-mono text-slate-400">
+            <span className="ml-auto text-xs font-mono" style={{ color: '#475569' }}>
               {currentIdx + 1} / {turns.length}
             </span>
           )}
@@ -284,7 +335,7 @@ export function PodcastPlayer({ podcast_script }: Props) {
             className="shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center transition-all disabled:opacity-60"
             style={{
               background: speakerConf
-                ? `linear-gradient(135deg,${speakerConf.color},${speakerConf.color}bb)`
+                ? `linear-gradient(135deg,${speakerConf.color}99,${speakerConf.color})`
                 : 'linear-gradient(135deg,#6366f1,#a855f7)',
               boxShadow: isPlaying
                 ? `0 6px 20px ${speakerConf?.border ?? 'rgba(99,102,241,0.3)'}`
@@ -315,22 +366,22 @@ export function PodcastPlayer({ podcast_script }: Props) {
 
               {status === 'idle' && (
                 <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <p className="text-sm font-bold text-slate-800">Poslechnout výukový podcast</p>
-                  <p className="text-xs text-slate-500">Klikni — vygeneruje se rozhovor učitelky a studenta</p>
+                  <p className="text-sm font-bold" style={{ color: '#e2e8f0' }}>Poslechnout výukový podcast</p>
+                  <p className="text-xs" style={{ color: '#64748b' }}>Klikni — vygeneruje se rozhovor učitelky a studenta</p>
                 </motion.div>
               )}
 
               {status === 'loading' && (
                 <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <p className="text-sm font-bold text-slate-800">Generuji hlasy…</p>
-                  <p className="text-xs text-slate-500">Nahrávám učitelku (nova) a studenta (onyx) — chvíli strpení</p>
+                  <p className="text-sm font-bold" style={{ color: '#e2e8f0' }}>Generuji hlasy…</p>
+                  <p className="text-xs" style={{ color: '#64748b' }}>Nahrávám učitelku (nova) a studenta (onyx) — chvíli strpení</p>
                 </motion.div>
               )}
 
               {status === 'error' && (
                 <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <p className="text-sm font-bold text-red-600">Nepodařilo se načíst podcast</p>
-                  <button onClick={fetchPodcast} className="text-xs text-indigo-500 underline mt-0.5">
+                  <p className="text-sm font-bold" style={{ color: '#f87171' }}>Nepodařilo se načíst podcast</p>
+                  <button onClick={fetchPodcast} className="text-xs underline mt-0.5" style={{ color: '#818cf8' }}>
                     Zkusit znovu
                   </button>
                 </motion.div>
@@ -350,7 +401,7 @@ export function PodcastPlayer({ podcast_script }: Props) {
                     className="text-xs leading-relaxed line-clamp-3 italic"
                     style={{ color: speakerConf.color }}
                   >
-                    "{currentTurn.text.slice(0, 130)}{currentTurn.text.length > 130 ? '…' : ''}"
+                    &ldquo;{currentTurn.text.slice(0, 130)}{currentTurn.text.length > 130 ? '…' : ''}&rdquo;
                   </motion.p>
                 </motion.div>
               )}
@@ -362,10 +413,10 @@ export function PodcastPlayer({ podcast_script }: Props) {
           {status === 'ready' && (
             <button onClick={restart}
               className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all"
-              style={{ background: 'rgba(99,102,241,0.08)' }}
+              style={{ background: 'rgba(99,102,241,0.10)' }}
               title="Přehrát od začátku"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-indigo-400" />
+              <RotateCcw className="w-3.5 h-3.5" style={{ color: '#818cf8' }} />
             </button>
           )}
         </div>
@@ -375,7 +426,7 @@ export function PodcastPlayer({ podcast_script }: Props) {
           <div className="space-y-1">
             <div
               className="relative h-1.5 rounded-full overflow-hidden"
-              style={{ background: 'rgba(99,102,241,0.10)' }}
+              style={{ background: 'rgba(99,102,241,0.12)' }}
             >
               <motion.div
                 className="absolute left-0 top-0 h-full rounded-full"
@@ -388,7 +439,7 @@ export function PodcastPlayer({ podcast_script }: Props) {
                 transition={{ duration: 0.3, ease: 'linear' }}
               />
             </div>
-            <div className="flex justify-between text-xs text-slate-400 font-mono">
+            <div className="flex justify-between text-xs font-mono" style={{ color: '#475569' }}>
               <span>{formatTime(currentTime)}</span>
               <span>{formatTime(turnDuration > 0 ? turnDuration : 0)}</span>
             </div>

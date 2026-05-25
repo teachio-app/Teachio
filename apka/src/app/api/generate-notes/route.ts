@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
-import type { SmartNotes, StudyModule, QuizQuestion, StudyLevel, ExamGoal } from '@/types'
-import { tryUseCredit } from '@/lib/actions/credits'
+import type { SmartNotes, StudyModule, QuizQuestion, PodcastTurn, StudyLevel, ExamGoal } from '@/types'
+import { tryUseCredit, trackCreditUsed } from '@/lib/actions/credits'
 import { buildLangDirective } from '@/lib/i18n/langDirective'
 import { TEACHIO_IDENTITY } from '@/lib/teachioIdentity'
 
@@ -44,29 +44,29 @@ ABSOLUTNÍ PRAVIDLA — PORUŠENÍ = ODMÍTNUTÍ VÝSTUPU:
    — question: testovat porozumění, nikoli memorování
    — options: přesně 4 možnosti — jedna správná, tři přesvědčivě špatné (ne zjevné nesmysly)
    — correct_index: číslo 0–3 (index správné odpovědi)
-   — explanation_why_correct: proč je tato odpověď správná A proč jsou ostatní špatné
+   — explanation_why_correct: POVINNĚ použij PŘESNÝ TEXT z pole options.
+     Formát: "Správně je '[přesný text správné možnosti]', protože [důvod].
+     '[přesný text špatné možnosti 1]' je špatně, protože [důvod].
+     '[přesný text špatné možnosti 2]' je špatně, protože [důvod]."
+     NIKDY nepiš jiná slova než ta, která jsou v poli options.
    Otázky musí pokrývat různé úrovně: fakta, porozumění, aplikace, analýza.
 
 ⑦ ABSOLUTNÍ ZÁKAZ VATY
    Zakázané fráze: "Toto je komplexní téma", "Existuje mnoho přístupů", "Je důležité pochopit".
    Každá věta = minimálně 1 konkrétní informace.
 
-⑧ AUDIO SCRIPT — VIRÁLNÍ SOLO-PODCAST (400–600 slov = 3–5 minut poslechu)
-   Piš jako HVĚZDNÝ PODCAST MODERÁTOR — jeden hlas, maximální charisma, autentická energie.
-   Toto NENÍ přednáška ani shrnutí. Je to epizoda, po níž posluchač pošle odkaz kamarádovi.
+⑧ PODCAST SKRIPT — VIRÁLNÍ RADIO SHOW (2 mluvčí, 8 replik)
+   Skript je živý ROZHOVOR — ne monolog, ne přednáška.
+   UČITELKA (speaker: "teacher"): charismatická expertka. Zahajuje překvapivým faktem, přerušuje sama sebe, reaguje emotivně.
+   STUDENT (speaker: "student"): zvídavý, používá Feynmanovu techniku + emoce. Přerušuje, reaguje šokem, parafrázuje moderními analogiemi.
 
-   POVINNÉ PRVKY — KAŽDÝ MUSÍ BÝT POUŽIT:
-   ① Výbušný úvod (ŽÁDNÉ "Dnes si povíme o..."): překvapivý fakt, scéna nebo provokace, která chytne za 3 vteřiny.
-   ② Filler words a mikropauzy: "Hmm... počkej.", "Jo, a víš co?", "OK, stop —", "Hele, tohle je klíčové:"
-   ③ Přerušení vlastní myšlenky: "Vlastně — nejdřív musím říct...", "Ale moment, ještě než pokračuju —"
-   ④ Emocionální reakce moderátora: "Upřímně, tohle mě taky dostalo.", "Ne, vážně — tohle mě vyrazilo dech.", "Jsem z toho ještě trochu šokovaný."
-   ⑤ Moderní analogie ze světa studenta: Netflix, TikTok, AI, gaming, sociální sítě — ne staré metafory.
-   ⑥ Min. 3 rhetorické otázky namířené PŘÍMO na posluchače.
-   ⑦ Silný závěr: výzva k zamyšlení nebo provokativní myšlenka, ne "Doufám, že se ti to líbilo."
+   POVINNÉ PRVKY V KAŽDÉ REPLICE:
+   — Filler words: "Hmm —", "počkej —", "jo ale —", "hele —"
+   — Přirozené přerušení myšlenky nebo partnera
+   — Moderní analogie (TikTok, Netflix, gaming, AI)
+   — Emoce: překvapení, šok, nadšení, ne robotické střídání
 
-   PŘÍSNĚ ZAKÁZÁNO: akademický tón, výčet faktů bez emocí, formální uvítání, věty začínající "Je důležité si uvědomit".
-
-   ✓ PŘÍKLAD STYLU: "Hele... přemýšlels někdy, proč si pamatuješ každý trapný moment ze základky, ale zapomeneš, co jsi jedl v pondělí? Hmm? Odpověď je fascinující — a trochu děsivá. Amygdala — malé mandlové jádro hluboko v tvém mozku — doslova hackuje tvou paměť. Přiděluje vzpomínkám prioritu podle emocí. Čím víc emoce, tím silnější záznam. Je to jako... Instagram algoritmus pro tvůj mozek — nejemotivnější obsah dostane nejvíc místa. Počkej — tohle má přímé důsledky pro to, jak se učíš. A to nás vede k..."
+   PŘÍSNĚ ZAKÁZÁNO: "Vítejte v podcastu", robotické střídání bez emocí, akademický tón.
 
 ⑨ VÝSTUP: POUZE validní JSON, žádný text před/za ním.`
 
@@ -160,7 +160,16 @@ Vrať VÝHRADNĚ tento JSON (bez jakéhokoli dalšího textu):
       "explanation_why_correct": "..."
     }
   ],
-  "audio_script": "VIRÁLNÍ SOLO-PODCAST 400–600 slov o tématu '${topic}'. VÝBUŠNÝ ÚVOD bez 'Dnes si povíme'. Povinné: filler words ('Hmm... počkej.', 'Jo, a víš co?', 'OK stop —'), přerušení vlastní myšlenky ('Vlastně — nejdřív musím říct...'), emocionální reakce moderátora ('Tohle mě vyrazilo dech.', 'Jsem z toho ještě šokovaný.'), moderní analogie (Netflix / TikTok / AI / gaming), min. 3 rhetorické otázky přímo na posluchače, dramatizátory ('A teď ta bomba:', 'Tady přichází ta část, kvůli které tohle stojí za to slyšet:'). Silný závěr — NE 'Doufám, že se ti líbilo'. ŽÁDNÝ akademický tón. Piš přesně jako hvězdný podcast moderátor.",
+  "podcast_script": [
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." },
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." },
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." },
+    { "speaker": "teacher", "text": "..." },
+    { "speaker": "student", "text": "..." }
+  ],
   "flashcards": [
     { "term": "Pojem 1 z tématu ${topic}", "definition": "Přesná definice pojmu 1" },
     { "term": "Pojem 2", "definition": "Přesná definice 2" },
@@ -233,6 +242,15 @@ function validate(parsed: unknown): SmartNotes {
   )
   if (badQ) throw new Error(`Malformed quiz question: "${badQ?.question?.slice(0, 40)}"`)
 
+  if (r?.podcast_script !== undefined) {
+    if (!Array.isArray(r.podcast_script) || r.podcast_script.length < 4)
+      throw new Error('podcast_script present but has fewer than 4 turns')
+    const badTurn = (r.podcast_script as PodcastTurn[]).find(
+      t => !['teacher', 'student'].includes(t?.speaker) || !t?.text?.trim()
+    )
+    if (badTurn) throw new Error(`Malformed podcast_script turn (speaker: "${badTurn?.speaker}")`)
+  }
+
   return r
 }
 
@@ -263,7 +281,7 @@ export async function POST(req: NextRequest) {
     if (user) {
       authedUserId = user.id
       const creditResult = await tryUseCredit(user.id)
-      if (creditResult === 'no_credits') {
+      if (creditResult !== 'ok') {
         return NextResponse.json({ error: 'insufficient_credits' }, { status: 403 })
       }
     }
@@ -312,6 +330,20 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Credit already atomically deducted above
+  if (authedUserId) trackCreditUsed(authedUserId).catch(() => {})
+
+  // Save to student_notes history (non-fatal if columns don't exist yet)
+  if (authedUserId) {
+    try {
+      const { supabaseAdmin } = await import('@/lib/supabase/admin')
+      const { data: saved } = await supabaseAdmin
+        .from('student_notes')
+        .insert({ user_id: authedUserId, topic: topic.trim(), level, notes_data: notes })
+        .select('id')
+        .single()
+      if (saved?.id) return NextResponse.json({ ...notes, _note_id: saved.id })
+    } catch { /* table columns not yet migrated — continue without saving */ }
+  }
+
   return NextResponse.json(notes)
 }

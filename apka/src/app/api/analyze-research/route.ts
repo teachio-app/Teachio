@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
       const creditResult = await tryUseCredit(user.id)
-      if (creditResult === 'no_credits') {
+      if (creditResult !== 'ok') {
         return NextResponse.json({ error: 'insufficient_credits' }, { status: 403 })
       }
     }

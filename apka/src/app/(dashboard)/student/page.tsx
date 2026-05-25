@@ -1,24 +1,25 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import dynamic from 'next/dynamic'
+import { ExamCalendar, type ExamCalendarHandle } from '@/components/student/ExamCalendar'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Brain, Zap, AlertTriangle, Lightbulb,
-  BookOpen, Copy, Check, Download, GraduationCap, Layers,
+  Copy, Check, Download, Layers,
   BookMarked, FileText, UploadCloud, X as XIcon,
 } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { InteractiveQuiz } from '@/components/student/InteractiveQuiz'
-import { AudioPlayer } from '@/components/student/AudioPlayer'
-import { PodcastPlayer } from '@/components/student/PodcastPlayer'
-import { FlashcardGroup } from '@/components/student/FlashcardGroup'
-import { InteractiveGame } from '@/components/student/InteractiveGame'
-import { MermaidDiagram } from '@/components/student/MermaidDiagram'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
-import { FloatingChat } from '@/components/ui/FloatingChat'
 import type { SmartNotes, StudyLevel, ExamGoal } from '@/types'
+
+// ── Lazy-loaded heavy components (only bundled when results are shown) ─────────
+const InteractiveQuiz = dynamic(() => import('@/components/student/InteractiveQuiz').then(m => ({ default: m.InteractiveQuiz })), { ssr: false })
+const AudioPlayer     = dynamic(() => import('@/components/student/AudioPlayer').then(m => ({ default: m.AudioPlayer })),     { ssr: false })
+const PodcastPlayer   = dynamic(() => import('@/components/student/PodcastPlayer').then(m => ({ default: m.PodcastPlayer })), { ssr: false })
+const FlashcardGroup  = dynamic(() => import('@/components/student/FlashcardGroup').then(m => ({ default: m.FlashcardGroup })), { ssr: false })
+const InteractiveGame = dynamic(() => import('@/components/student/InteractiveGame').then(m => ({ default: m.InteractiveGame })), { ssr: false })
+const MermaidDiagram  = dynamic(() => import('@/components/student/MermaidDiagram').then(m => ({ default: m.MermaidDiagram })),  { ssr: false })
+const FloatingChat    = dynamic(() => import('@/components/ui/FloatingChat').then(m => ({ default: m.FloatingChat })),          { ssr: false })
 
 // ── Document context builder ──────────────────────────────────────────────────
 
@@ -231,7 +232,7 @@ function LoadingState({ message }: { message: string }) {
               {message}
             </motion.p>
           </AnimatePresence>
-          <p className="text-slate-400 text-sm">Obvykle 3–6 sekund</p>
+          <p className="text-slate-400 text-sm">Může trvat cca 30 vteřin</p>
         </div>
 
         {/* Animated progress bar */}
@@ -267,6 +268,10 @@ export default function StudentPage() {
   const [notes,     setNotes]     = useState<SmartNotes | null>(null)
   const [error,     setError]     = useState<string | null>(null)
   const [msgIdx,    setMsgIdx]    = useState(0)
+  const calendarRef = useRef<ExamCalendarHandle>(null)
+  const [bentoModal, setBentoModal] = useState<'podcast' | 'quiz' | 'flashcards' | 'game' | null>(null)
+  const [bentoFlipped, setBentoFlipped] = useState(false)
+  const [bentoAudioPlaying, setBentoAudioPlaying] = useState(false)
 
   useEffect(() => {
     if (!loading) { setMsgIdx(0); return }
@@ -391,133 +396,93 @@ export default function StudentPage() {
     await downloadPdf(buildPDFHTML(notes, inputMode === 'notes' ? 'Vlastní zápisky' : topic, LEVEL_META[level].label), `teachio-${label}.pdf`)
   }
 
+  // Quick topic chips removed — only functional actions kept
+
   return (
-    <div className="space-y-10">
+    // True full-bleed: 100vw with calc trick breaks out of max-w-6xl container
+    // The dark background comes from layout.tsx (fixed full-viewport layer)
+    <div
+      className="-mt-10 -mb-10 relative"
+      style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)', minHeight: '100vh' }}
+    >
+      <div className="relative max-w-2xl mx-auto px-4 sm:px-6 py-12 space-y-7">
 
-      {/* ── Hero ── */}
-      <div className="text-center space-y-6 pt-4 pb-2">
-        <div className="flex justify-center">
-          <div className="w-20 h-20 rounded-3xl flex items-center justify-center shadow-2xl"
-            style={{
-              background: 'linear-gradient(135deg,#6366f1 0%,#a855f7 50%,#ec4899 100%)',
-              boxShadow: '0 20px 60px rgba(168,85,247,0.38),0 4px 16px rgba(0,0,0,0.12)',
-            }}>
-            <Brain className="w-10 h-10 text-white" strokeWidth={1.5} />
+        {/* ── Logo + tagline ── */}
+        <div className="text-center space-y-2 pt-2">
+          <div className="flex justify-center mb-4">
+            <motion.div
+              animate={{ scale: [1, 1.06, 1] }}
+              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              className="w-14 h-14 rounded-2xl flex items-center justify-center"
+              style={{
+                background: 'linear-gradient(135deg,#4f46e5,#7c3aed,#a855f7)',
+                boxShadow: '0 0 40px rgba(124,58,237,0.5), 0 8px 32px rgba(0,0,0,0.4)',
+              }}
+            >
+              <Brain className="w-7 h-7 text-white" strokeWidth={1.5} />
+            </motion.div>
           </div>
-        </div>
-
-        <div className="space-y-3">
-          <h1 className="text-5xl sm:text-6xl font-extrabold tracking-tight leading-tight"
-            style={{ background: 'linear-gradient(135deg,#6366f1,#a855f7,#ec4899)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-            Chytré výpisky
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#f1f5f9' }}>
+            Co se dnes chceš naučit?
           </h1>
-          <p className="text-slate-600 text-lg sm:text-xl max-w-xl mx-auto leading-relaxed">
-            {st.pageSubtitle}
+          <p className="text-sm" style={{ color: '#64748b' }}>
+            Zadej téma nebo nahraj zápisky — Teachio vygeneruje vše za tebe
           </p>
         </div>
 
-        <div className="flex flex-wrap justify-center gap-3">
-          {[
-            { icon: Zap,           label: 'TL;DR za 10 s',    sub: 'absolutní esence' },
-            { icon: AlertTriangle, label: 'Chytáky zkoušky',   sub: 'kde studenti chybují' },
-            { icon: Lightbulb,     label: 'Mnemotechnika',     sub: 'zapamatuj si víc' },
-          ].map(({ icon: Icon, label, sub }) => (
-            <div key={label} className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl"
-              style={{ background: 'rgba(255,255,255,0.55)', backdropFilter: 'blur(8px)', border: '1.5px solid rgba(255,255,255,0.8)', boxShadow: '0 4px 16px rgba(168,85,247,0.08)' }}>
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                style={{ background: 'linear-gradient(135deg,#f5f3ff,#ede9fe)' }}>
-                <Icon className="w-3.5 h-3.5 text-violet-600" strokeWidth={2} />
-              </div>
-              <div className="text-left">
-                <p className="text-xs font-bold text-slate-800 leading-none">{label}</p>
-                <p className="text-xs text-slate-500 mt-0.5 leading-none">{sub}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Form ── */}
-      <div className="max-w-2xl mx-auto">
-        <div className="rounded-3xl overflow-hidden"
-          style={{
-            background: 'rgba(255,255,255,0.82)',
-            border: '1.5px solid rgba(255,255,255,0.92)',
-            boxShadow: '0 20px 48px rgba(168,85,247,0.10),0 4px 12px rgba(109,40,217,0.07),inset 0 1px 0 rgba(255,255,255,0.95)',
-          }}>
-          {/* Gradient bar — violet/pink for student mode */}
-          <div className="h-1.5 w-full"
-            style={{ background: 'linear-gradient(90deg,#6366f1,#a855f7,#ec4899,#a855f7,#6366f1)', backgroundSize: '200%' }} />
-
-          <div className="p-8 sm:p-10">
-            <form onSubmit={submit} className="space-y-6">
-
-              {/* ── Input mode toggle ── */}
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                  {st.inputMode.label}
-                </Label>
-                <div
-                  className="grid grid-cols-2 rounded-2xl p-1 gap-1"
-                  style={{ background: 'rgba(109,40,217,0.07)', border: '1px solid rgba(255,255,255,0.6)' }}
+        {/* ── Central AI Input Bar ── */}
+        <form onSubmit={submit}>
+          <div
+            className="rounded-3xl overflow-hidden transition-all duration-300"
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(124,58,237,0.30)',
+              boxShadow: '0 0 0 1px rgba(124,58,237,0.10), 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)',
+            }}
+          >
+            {/* Mode toggle */}
+            <div className="flex border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+              {([
+                { mode: 'topic' as InputMode, icon: BookMarked, label: '✨ Zadat téma' },
+                { mode: 'notes' as InputMode, icon: FileText,   label: '📄 Nahrát zápisky / PDF' },
+              ] as const).map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode} type="button" onClick={() => setInputMode(mode)}
+                  className="flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-semibold transition-all"
+                  style={{
+                    color: inputMode === mode ? '#a78bfa' : '#475569',
+                    background: inputMode === mode ? 'rgba(124,58,237,0.10)' : 'transparent',
+                    borderBottom: inputMode === mode ? '2px solid #7c3aed' : '2px solid transparent',
+                  }}
                 >
-                  {([
-                    { mode: 'topic' as InputMode, icon: BookMarked, label: st.inputMode.topic, desc: st.inputMode.topicDesc },
-                    { mode: 'notes' as InputMode, icon: FileText,   label: st.inputMode.notes, desc: st.inputMode.notesDesc },
-                  ] as const).map(({ mode, icon: Icon, label, desc }) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setInputMode(mode)}
-                      className="flex items-center gap-2.5 px-4 py-3 rounded-xl text-left transition-all"
-                      style={{
-                        background: inputMode === mode
-                          ? 'linear-gradient(135deg,#6366f1,#a855f7)'
-                          : 'transparent',
-                        boxShadow: inputMode === mode ? '0 4px 16px rgba(109,40,217,0.25)' : 'none',
-                      }}
-                    >
-                      <Icon
-                        className="w-4 h-4 shrink-0"
-                        style={{ color: inputMode === mode ? 'rgba(255,255,255,0.9)' : '#7c3aed' }}
-                        strokeWidth={2}
-                      />
-                      <div>
-                        <p className="text-xs font-bold leading-none"
-                          style={{ color: inputMode === mode ? '#fff' : '#374151' }}>
-                          {label}
-                        </p>
-                        <p className="text-xs mt-0.5 leading-none"
-                          style={{ color: inputMode === mode ? 'rgba(255,255,255,0.7)' : '#9ca3af' }}>
-                          {desc}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                  <Icon className="w-4 h-4" strokeWidth={2} />
+                  {label}
+                </button>
+              ))}
+            </div>
 
-              {/* ── Conditional input ── */}
+            {/* Input area */}
+            <div className="p-4 sm:p-6 space-y-4">
+
               {inputMode === 'topic' ? (
-                <div className="space-y-2">
-                  <Label htmlFor="topic" className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                    Téma ke studiu
-                  </Label>
-                  <Input id="topic" value={topic} onChange={e => setTopic(e.target.value)}
+                <div className="relative">
+                  <input
+                    value={topic}
+                    onChange={e => setTopic(e.target.value)}
                     placeholder="Např. Fotosyntéza, Druhá světová válka, Newtonovy zákony…"
-                    className="bg-white/70 border-white/60 focus:bg-white/90"
-                    style={{ height: '52px', fontSize: '15px' }} />
+                    className="w-full bg-transparent border-0 outline-none text-base placeholder-slate-600 font-medium"
+                    style={{ color: '#f1f5f9', fontSize: '16px', minHeight: '60px', resize: 'none' }}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (topic.trim()) submit(e as unknown as React.FormEvent) } }}
+                  />
                 </div>
               ) : (
-                /* ── BYON: Drop Zone (primary) + collapsible textarea ── */
                 <div className="space-y-3">
-
-                  {/* Drop Zone */}
+                  {/* Drop zone */}
                   <label
-                    className="relative flex flex-col items-center justify-center gap-3 py-8 px-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all"
+                    className="relative flex flex-col items-center justify-center gap-3 py-8 px-4 rounded-2xl border-2 border-dashed cursor-pointer transition-all"
                     style={{
-                      borderColor: isDragOver ? '#6366f1' : uploadParsing ? '#a5b4fc' : rawNotes ? '#86efac' : 'rgba(124,58,237,0.30)',
-                      background:  isDragOver ? 'rgba(99,102,241,0.07)' : uploadParsing ? 'rgba(167,139,250,0.05)' : rawNotes ? 'rgba(134,239,172,0.07)' : 'rgba(255,255,255,0.50)',
+                      borderColor: isDragOver ? '#7c3aed' : uploadParsing ? '#a78bfa' : rawNotes ? '#4ade80' : 'rgba(124,58,237,0.25)',
+                      background: isDragOver ? 'rgba(124,58,237,0.08)' : rawNotes ? 'rgba(74,222,128,0.04)' : 'rgba(255,255,255,0.02)',
                     }}
                     onDragEnter={e => { e.preventDefault(); setIsDragOver(true) }}
                     onDragOver={e => { e.preventDefault(); setIsDragOver(true) }}
@@ -525,43 +490,33 @@ export default function StudentPage() {
                     onDrop={handleDrop}
                   >
                     {uploadParsing && uploadProgress ? (
-                      /* Uploading */
-                      <div className="text-center space-y-2.5">
+                      <div className="text-center space-y-2">
                         <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
-                          className="w-10 h-10 rounded-full border-2 border-violet-200 border-t-violet-600 mx-auto" />
-                        <p className="text-sm font-semibold text-violet-700">
-                          {uploadProgress.total > 1
-                            ? `Načítám ${uploadProgress.current} / ${uploadProgress.total} souborů…`
-                            : st.upload.parsing}
+                          className="w-9 h-9 rounded-full border-2 mx-auto"
+                          style={{ borderColor: 'rgba(167,139,250,0.3)', borderTopColor: '#a78bfa' }} />
+                        <p className="text-sm font-semibold" style={{ color: '#a78bfa' }}>
+                          {uploadProgress.total > 1 ? `Načítám ${uploadProgress.current}/${uploadProgress.total} souborů…` : 'Čtu dokument…'}
                         </p>
                       </div>
                     ) : rawNotes ? (
-                      /* Loaded */
                       <div className="text-center space-y-1.5 pointer-events-none">
-                        <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
-                          <Check className="w-5 h-5 text-emerald-600" strokeWidth={2.5} />
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center mx-auto" style={{ background: 'rgba(74,222,128,0.15)' }}>
+                          <Check className="w-5 h-5" style={{ color: '#4ade80' }} strokeWidth={2.5} />
                         </div>
-                        <p className="text-sm font-bold text-emerald-800">Obsah načten</p>
-                        <p className="text-xs text-slate-500">{rawNotes.length.toLocaleString('cs')} znaků</p>
-                        <p className="text-xs text-slate-400">Přetáhni další soubory pro přidání</p>
+                        <p className="text-sm font-bold" style={{ color: '#4ade80' }}>Obsah načten ✓</p>
+                        <p className="text-xs" style={{ color: '#64748b' }}>{rawNotes.length.toLocaleString('cs')} znaků · Přetáhni další pro přidání</p>
                       </div>
                     ) : (
-                      /* Empty */
-                      <div className="text-center space-y-2.5 pointer-events-none">
-                        <motion.div
-                          animate={isDragOver ? { scale: 1.12 } : { scale: 1 }}
-                          transition={{ type: 'spring', stiffness: 300 }}
+                      <div className="text-center space-y-2 pointer-events-none">
+                        <motion.div animate={isDragOver ? { scale: 1.15 } : { scale: 1 }} transition={{ type: 'spring', stiffness: 300 }}
                           className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto"
-                          style={{ background: 'linear-gradient(135deg,#ede9fe,#ddd6fe)' }}
-                        >
-                          <UploadCloud className="w-6 h-6 text-violet-500" strokeWidth={1.8} />
+                          style={{ background: 'rgba(124,58,237,0.12)' }}>
+                          <UploadCloud className="w-6 h-6" style={{ color: '#a78bfa' }} strokeWidth={1.8} />
                         </motion.div>
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">
-                            {isDragOver ? 'Pusť soubory!' : 'Přetáhni sem soubory nebo klikni'}
-                          </p>
-                          <p className="text-xs text-slate-400 mt-1">.pdf, .docx, .txt — více souborů najednou</p>
-                        </div>
+                        <p className="text-sm font-bold" style={{ color: '#94a3b8' }}>
+                          {isDragOver ? '🎯 Pusť soubory!' : 'Přetáhni PDF, DOCX, nebo TXT'}
+                        </p>
+                        <p className="text-xs" style={{ color: '#475569' }}>nebo klikni pro výběr · více souborů najednou</p>
                       </div>
                     )}
                     <input type="file" multiple
@@ -569,463 +524,596 @@ export default function StudentPage() {
                       className="sr-only" onChange={handleFileUpload} disabled={uploadParsing} />
                   </label>
 
-                  {/* Action row */}
-                  <div className="flex items-center justify-between min-h-[24px]">
+                  {/* Controls row */}
+                  <div className="flex items-center justify-between">
                     {rawNotes ? (
-                      <div className="flex gap-3 items-center">
+                      <div className="flex gap-3">
                         <button type="button" onClick={() => setShowTextarea(v => !v)}
-                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
-                          {showTextarea ? '▲ Skrýt editor' : '✏️ Upravit obsah'}
+                          className="text-xs font-semibold transition-colors" style={{ color: '#7c3aed' }}>
+                          {showTextarea ? '▲ Skrýt' : '✏️ Upravit text'}
                         </button>
                         <button type="button" onClick={() => { setRawNotes(''); setShowTextarea(false) }}
-                          className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-red-500 transition-colors">
+                          className="flex items-center gap-1 text-xs font-semibold transition-colors" style={{ color: '#475569' }}>
                           <XIcon className="w-3 h-3" />Smazat
                         </button>
                       </div>
                     ) : (
                       <button type="button" onClick={() => setShowTextarea(v => !v)}
-                        className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors">
+                        className="text-xs underline underline-offset-2 transition-colors" style={{ color: '#475569' }}>
                         {showTextarea ? '▲ Skrýt' : 'Nebo vložit text ručně'}
                       </button>
                     )}
                   </div>
 
-                  {/* Collapsible manual textarea */}
                   <AnimatePresence>
                     {showTextarea && (
                       <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} style={{ overflow: 'hidden' }}>
-                        <Textarea value={rawNotes} onChange={e => setRawNotes(e.target.value)}
-                          placeholder={st.notesPlaceholder}
-                          className="bg-white/70 border-white/60 focus:bg-white/90 resize-none font-mono text-sm leading-relaxed"
-                          style={{ minHeight: '180px', fontSize: '13px' }} />
+                        <textarea
+                          value={rawNotes} onChange={e => setRawNotes(e.target.value)}
+                          placeholder="Vlož zápisky, texty nebo studijní materiály…"
+                          className="w-full rounded-2xl px-4 py-3 text-sm font-mono leading-relaxed resize-none outline-none border transition-colors"
+                          style={{
+                            minHeight: '160px', background: 'rgba(255,255,255,0.03)',
+                            border: '1px solid rgba(255,255,255,0.08)', color: '#f1f5f9',
+                            fontSize: '13px',
+                          }}
+                        />
                       </motion.div>
                     )}
                   </AnimatePresence>
 
                   {uploadError && (
-                    <p className="text-xs text-amber-600 flex items-center gap-1">
+                    <p className="text-xs flex items-center gap-1" style={{ color: '#fbbf24' }}>
                       <AlertTriangle className="w-3 h-3 shrink-0" />{uploadError}
                     </p>
                   )}
                 </div>
               )}
 
-              {/* Study level — toggle pills */}
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                  Úroveň studia
-                </Label>
-                <div className="grid grid-cols-3 gap-2">
+              {/* ── Settings row: level + goal + submit ── */}
+              <div className="flex flex-wrap items-center gap-2 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                {/* Level pills */}
+                <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
                   {STUDY_LEVELS.map(l => (
-                    <button
-                      key={l}
-                      type="button"
-                      onClick={() => setLevel(l)}
-                      className="flex flex-col items-center gap-0.5 py-3 rounded-xl transition-all text-sm font-bold"
+                    <button key={l} type="button" onClick={() => setLevel(l)}
+                      className="px-3 py-1.5 text-xs font-bold transition-all"
                       style={{
-                        background: level === l
-                          ? 'linear-gradient(135deg,#6366f1,#a855f7)'
-                          : 'rgba(255,255,255,0.6)',
-                        border: level === l
-                          ? '1.5px solid rgba(99,102,241,0.3)'
-                          : '1.5px solid rgba(255,255,255,0.75)',
-                        color: level === l ? '#fff' : '#64748b',
-                        boxShadow: level === l
-                          ? '0 4px 16px rgba(109,40,217,0.25)'
-                          : '0 2px 8px rgba(0,0,0,0.04)',
-                      }}
-                    >
-                      <span className="text-base">{l}</span>
-                      <span className="text-xs font-medium opacity-80">{LEVEL_META[l].desc}</span>
+                        background: level === l ? 'rgba(124,58,237,0.30)' : 'transparent',
+                        color: level === l ? '#c4b5fd' : '#475569',
+                      }}>
+                      {l}
                     </button>
                   ))}
                 </div>
-              </div>
 
-              {/* Exam goal selector */}
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                  Cíl přípravy
-                </Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {GOAL_BY_LEVEL[level].map(goalValue => {
-                    const goal = EXAM_GOALS.find(g => g.value === goalValue)!
-                    const meta = getGoalMeta(goalValue, level)
-                    const active = examGoal === goalValue
+                {/* Goal selector */}
+                <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+                  {GOAL_BY_LEVEL[level].map(gv => {
+                    const g = EXAM_GOALS.find(x => x.value === gv)!
                     return (
-                      <button
-                        key={goalValue}
-                        type="button"
-                        onClick={() => setExamGoal(goalValue)}
-                        className="flex items-start gap-3 p-3 rounded-xl text-left transition-all"
+                      <button key={gv} type="button" onClick={() => setExamGoal(gv)}
+                        className="px-3 py-1.5 text-xs font-bold transition-all"
                         style={{
-                          background: active ? goal.bg : 'rgba(255,255,255,0.55)',
-                          border: active
-                            ? `1.5px solid ${goal.accent}40`
-                            : '1.5px solid rgba(255,255,255,0.75)',
-                          boxShadow: active
-                            ? `0 4px 16px ${goal.accent}18`
-                            : '0 2px 8px rgba(0,0,0,0.03)',
-                        }}
-                      >
-                        <span className="text-xl shrink-0 mt-0.5">{goal.icon}</span>
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold leading-tight"
-                            style={{ color: active ? goal.accent : '#475569' }}>
-                            {meta.label}
-                          </p>
-                          <p className="text-xs mt-0.5 leading-snug"
-                            style={{ color: active ? goal.accent + 'cc' : '#94a3b8' }}>
-                            {meta.desc}
-                          </p>
-                        </div>
-                        {active && (
-                          <span className="shrink-0 w-2 h-2 rounded-full ml-auto mt-1"
-                            style={{ background: goal.accent }} />
-                        )}
+                          background: examGoal === gv ? 'rgba(124,58,237,0.30)' : 'transparent',
+                          color: examGoal === gv ? '#c4b5fd' : '#475569',
+                        }}>
+                        {g.icon} {getGoalMeta(gv, level).label.split(' ').slice(-1)[0]}
                       </button>
                     )
                   })}
                 </div>
+
+                {/* Submit */}
+                <button
+                  type="submit"
+                  disabled={loading || (inputMode === 'notes' ? rawNotes.trim().length < 20 : !topic.trim())}
+                  className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: loading
+                      ? 'rgba(124,58,237,0.4)'
+                      : 'linear-gradient(135deg,#6366f1,#7c3aed,#a855f7)',
+                    color: '#fff',
+                    boxShadow: loading ? 'none' : '0 4px 20px rgba(124,58,237,0.40)',
+                  }}
+                >
+                  {loading ? (
+                    <>
+                      <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                        className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white" />
+                      Generuji…
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4" strokeWidth={2.5} />
+                      {inputMode === 'notes' ? 'Zpracovat zápisky' : 'Vygenerovat'}
+                    </>
+                  )}
+                </button>
               </div>
 
+              {/* Error */}
               {error && (
-                <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-                  className="flex gap-2 text-sm text-red-700 bg-red-50/90 border border-red-200 rounded-xl px-4 py-3">
+                <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                  className="flex gap-2 text-sm rounded-xl px-4 py-3"
+                  style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.20)', color: '#fca5a5' }}>
                   <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /><span>{error}</span>
                 </motion.div>
               )}
-
-              {(() => {
-                const isBYON = inputMode === 'notes'
-                const disabled = loading ||
-                  (isBYON ? rawNotes.trim().length < 20 : !topic.trim())
-                return (
-                  <button type="submit" disabled={disabled}
-                    className="w-full font-bold text-white rounded-2xl transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                    style={{
-                      height: '56px', fontSize: '15px', letterSpacing: '0.01em',
-                      background: loading
-                        ? 'linear-gradient(135deg,#7c3aed,#a855f7)'
-                        : 'linear-gradient(135deg,#6366f1 0%,#a855f7 50%,#ec4899 100%)',
-                      boxShadow: disabled ? 'none' : '0 12px 40px rgba(168,85,247,0.35),0 4px 12px rgba(0,0,0,0.10)',
-                    }}>
-                    {loading
-                      ? st.generatingBtn
-                      : isBYON ? st.processBtn : st.generateBtn}
-                  </button>
-                )
-              })()}
-            </form>
+            </div>
           </div>
-        </div>
-      </div>
+        </form>
 
-      {/* ── Loading ── */}
-      {loading && (
-        <LoadingState
-          message={(inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES)[msgIdx]}
-        />
-      )}
+        {/* ── Functional quick actions (idle only) ── */}
+        {!notes && !loading && (
+          <div className="flex flex-wrap gap-2 justify-center">
+            <button type="button" onClick={() => calendarRef.current?.openModal()}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all hover:scale-105"
+              style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.28)', color: '#a78bfa' }}>
+              🗓️ Vytvořit studijní plán
+            </button>
+            <button type="button" onClick={() => setBentoModal('podcast')}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all hover:scale-105"
+              style={{ background: 'rgba(219,39,119,0.10)', border: '1px solid rgba(219,39,119,0.22)', color: '#f472b6' }}>
+              🎧 Audio Tutor
+            </button>
+          </div>
+        )}
 
-      {/* ── Results ── */}
-      <AnimatePresence>
-        {notes && !loading && (
-          <motion.div key="results" initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-            className="max-w-2xl mx-auto space-y-4">
+        {/* ── Bento grid — shown only in idle state ── */}
+        {!notes && !loading && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-            {/* Action bar */}
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                {inputMode === 'notes'
-                  ? <FileText className="w-4 h-4 text-violet-600 shrink-0" />
-                  : <GraduationCap className="w-4 h-4 text-violet-600 shrink-0" />
-                }
-                <span className="text-sm font-bold text-slate-700 truncate max-w-[180px]">
-                  {inputMode === 'notes' ? '📝 Vlastní zápisky' : topic}
-                </span>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-violet-700 shrink-0"
-                  style={{ background: 'rgba(124,58,237,0.1)' }}>{LEVEL_META[level].label}</span>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
-                  style={{ background: 'rgba(99,102,241,0.08)', color: '#4f46e5' }}>
-                  {EXAM_GOAL_LABELS[examGoal]}
-                </span>
+            {/* Interactive Exam Calendar */}
+            <ExamCalendar ref={calendarRef} />
+
+            {/* Feature: Podcast */}
+            <button onClick={() => { setBentoModal('podcast'); setBentoAudioPlaying(false) }}
+              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(219,39,119,0.15)' }}>
+                <span className="text-xl">🎧</span>
               </div>
-              <div className="flex gap-2">
-                <CopyBtn onClick={() => navigator.clipboard.writeText(notesText)} label="Kopírovat vše" />
-                <button onClick={handlePDF}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-white/70 bg-white/60 text-slate-500 hover:border-rose-300 hover:text-rose-600 hover:bg-rose-50/80 transition-all">
-                  <Download className="w-3.5 h-3.5" />PDF
-                </button>
+              <div>
+                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Výukový podcast</p>
+                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Učitelka a student diskutují tvé téma jako virální radio show</p>
+              </div>
+              <span className="text-xs font-semibold" style={{ color: '#db2777' }}>2 hlasy · klikni pro demo →</span>
+            </button>
+
+            {/* Feature: Quiz */}
+            <button onClick={() => setBentoModal('quiz')}
+              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.15)' }}>
+                <span className="text-xl">🧩</span>
+              </div>
+              <div>
+                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Interaktivní kvíz</p>
+                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>5 otázek s okamžitým vysvětlením — testuje porozumění, ne jen memorii</p>
+              </div>
+              <span className="text-xs font-semibold" style={{ color: '#6366f1' }}>Ihned po generování · klikni pro demo →</span>
+            </button>
+
+            {/* Feature: Flashcards */}
+            <button onClick={() => { setBentoModal('flashcards'); setBentoFlipped(false) }}
+              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(5,150,105,0.15)' }}>
+                <span className="text-xl">🃏</span>
+              </div>
+              <div>
+                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Flashkarty</p>
+                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Sada pojmů s definicemi — otočitelné kartičky ve stylu Quizlet</p>
+              </div>
+              <span className="text-xs font-semibold" style={{ color: '#059669' }}>3D flip · klikni pro demo →</span>
+            </button>
+
+            {/* Feature: Game */}
+            <button onClick={() => setBentoModal('game')}
+              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(217,119,6,0.15)' }}>
+                <span className="text-xl">🕹️</span>
+              </div>
+              <div>
+                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Minigra</p>
+                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Spáruj pojmy nebo seřaď — učení hrou, ne drillem</p>
+              </div>
+              <span className="text-xs font-semibold" style={{ color: '#d97706' }}>Matching + Sorting · klikni pro demo →</span>
+            </button>
+          </div>
+        )}
+
+
+
+        {/* ── Loading ── */}
+        {loading && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-8">
+            <div className="rounded-2xl p-10 text-center space-y-6"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(124,58,237,0.20)' }}>
+              <div className="flex justify-center">
+                <motion.div
+                  animate={{ scale: [1, 1.1, 1], opacity: [0.85, 1, 0.85] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                  style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)', boxShadow: '0 0 40px rgba(124,58,237,0.4)' }}
+                >
+                  <Brain className="w-8 h-8 text-white" strokeWidth={1.5} />
+                </motion.div>
+              </div>
+              <div className="space-y-1">
+                <AnimatePresence mode="wait">
+                  <motion.p key={(inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES)[msgIdx]}
+                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}
+                    className="font-semibold text-lg" style={{ color: '#f1f5f9' }}>
+                    {(inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES)[msgIdx]}
+                  </motion.p>
+                </AnimatePresence>
+                <p className="text-sm" style={{ color: '#475569' }}>Může trvat cca 30 vteřin</p>
+              </div>
+              <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <motion.div animate={{ x: ['-100%', '200%'] }} transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                  className="h-full w-1/3 rounded-full"
+                  style={{ background: 'linear-gradient(90deg,transparent,#7c3aed,#a855f7,transparent)' }} />
               </div>
             </div>
+          </motion.div>
+        )}
 
-            {/* ── Audio / Podcast player ── */}
-            {(notes.podcast_script || notes.audio_script) && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>
-                {notes.podcast_script
-                  ? <PodcastPlayer podcast_script={notes.podcast_script} />
-                  : <AudioPlayer script={notes.audio_script!} />
-                }
-              </motion.div>
-            )}
+        {/* ── Results ── */}
+        <AnimatePresence>
+          {notes && !loading && (
+            <motion.div key="results" initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-4">
 
-            {/* ── 0. Introduction — hook ── */}
-            {notes.introduction && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.02 }}>
-                <div className="rounded-2xl px-6 py-5 flex items-start gap-4"
-                  style={{
-                    background: 'linear-gradient(135deg,rgba(99,102,241,0.08),rgba(168,85,247,0.06))',
-                    border: '1.5px solid rgba(99,102,241,0.18)',
-                    boxShadow: '0 4px 20px rgba(99,102,241,0.08)',
-                  }}>
-                  <span className="text-2xl shrink-0 mt-0.5">✨</span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-1.5">Proč tě to zajímá</p>
-                    <p className="text-base text-slate-800 leading-relaxed font-medium">{notes.introduction}</p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* ── 1. TL;DR Hero ── */}
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-              <div style={{
-                background: 'linear-gradient(135deg,#1e1b4b 0%,#2d1f6e 50%,#4c1d95 100%)',
-                borderRadius: '20px',
-                padding: '28px 32px',
-                boxShadow: '0 16px 48px rgba(79,46,220,0.28),0 4px 12px rgba(0,0,0,0.12)',
-              }}>
-                <div className="flex items-center gap-2 mb-4">
-                  <Zap className="w-4 h-4 text-indigo-300" strokeWidth={2.5} />
-                  <span className="text-xs font-bold text-indigo-300 uppercase tracking-widest">
-                    TL;DR — Esence za 10 sekund
+              {/* Action bar */}
+              <div className="flex items-center justify-between flex-wrap gap-2 px-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-bold truncate max-w-[180px]" style={{ color: '#a78bfa' }}>
+                    {inputMode === 'notes' ? '📝 Zápisky' : topic}
+                  </span>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(124,58,237,0.15)', color: '#a78bfa' }}>{LEVEL_META[level].label}</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(99,102,241,0.12)', color: '#818cf8' }}>
+                    {EXAM_GOAL_LABELS[examGoal]}
                   </span>
                 </div>
-                <p className="text-white text-xl sm:text-2xl font-bold leading-relaxed">
-                  {notes.tl_dr}
-                </p>
-                <div className="mt-5 flex justify-end">
-                  <CopyBtn onClick={() => navigator.clipboard.writeText(notes.tl_dr)} label="Kopírovat" />
+                <div className="flex gap-2">
+                  <button onClick={() => navigator.clipboard.writeText(notesText)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)', color: '#64748b' }}>
+                    <Copy className="w-3.5 h-3.5" />Kopírovat vše
+                  </button>
+                  <button onClick={handlePDF}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)', color: '#64748b' }}>
+                    <Download className="w-3.5 h-3.5" />PDF
+                  </button>
                 </div>
               </div>
-            </motion.div>
 
-            {/* ── 2. Deep Modules ── */}
-            {notes.deep_modules && notes.deep_modules.length > 0 && (
-              <div className="space-y-3">
-                {/* Section header */}
-                <div className="flex items-center gap-2 px-1">
-                  <Layers className="w-4 h-4 text-indigo-500" strokeWidth={2} />
-                  <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest">Studijní moduly</span>
-                  <span className="text-xs text-slate-400">({notes.deep_modules.length})</span>
-                </div>
+              {/* Podcast / Audio */}
+              {(notes.podcast_script || notes.audio_script) && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                  {notes.podcast_script ? <PodcastPlayer podcast_script={notes.podcast_script} /> : <AudioPlayer script={notes.audio_script!} />}
+                </motion.div>
+              )}
 
-                {notes.deep_modules.map((mod, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.12 + i * 0.07 }}
-                    className="rounded-2xl overflow-hidden"
-                    style={{
-                      background: 'rgba(255,255,255,0.80)',
-                      border: '1.5px solid rgba(255,255,255,0.90)',
-                      boxShadow: '0 4px 20px rgba(109,40,217,0.07)',
-                    }}
-                  >
-                    {/* Module header */}
-                    <div
-                      className="flex items-center gap-3 px-5 py-3.5"
-                      style={{ borderBottom: '1px solid rgba(99,102,241,0.08)', background: 'rgba(99,102,241,0.04)' }}
-                    >
-                      <span
-                        className="shrink-0 w-7 h-7 rounded-xl text-white text-xs font-black flex items-center justify-center"
-                        style={{ background: FACT_GRADIENTS[i % FACT_GRADIENTS.length] }}
-                      >
-                        {i + 1}
-                      </span>
-                      <h4 className="text-sm font-bold text-slate-900">{mod.title}</h4>
-                    </div>
-
-                    {/* Explanation */}
-                    <div className="px-5 pt-4 pb-3">
-                      <p className="text-sm text-slate-700 leading-relaxed">{mod.explanation}</p>
-                    </div>
-
-                    {/* Analogy */}
-                    <div
-                      className="mx-4 mb-4 flex items-start gap-2.5 px-4 py-3 rounded-xl"
-                      style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.14)' }}
-                    >
-                      <span className="text-base shrink-0 mt-0.5">🌍</span>
-                      <p className="text-sm text-violet-800 italic leading-relaxed">{mod.analogy}</p>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-
-            {/* ── 3. Exam Traps — warning styling ── */}
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.22 }}>
-              <div className="rounded-2xl overflow-hidden"
-                style={{ background: 'rgba(255,251,235,0.95)', border: '1.5px solid rgba(245,158,11,0.25)', boxShadow: '0 8px 28px rgba(245,158,11,0.10)' }}>
-                {/* Header — warning-coloured */}
-                <div className="flex items-center justify-between px-5 py-4"
-                  style={{ borderBottom: '1px solid rgba(245,158,11,0.15)', background: 'rgba(245,158,11,0.06)' }}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                      style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
-                      <AlertTriangle className="w-4 h-4 text-white" strokeWidth={2.5} />
-                    </div>
+              {/* Introduction */}
+              {notes.introduction && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.02 }}>
+                  <div className="rounded-2xl px-6 py-5 flex items-start gap-4"
+                    style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.18)' }}>
+                    <span className="text-2xl shrink-0 mt-0.5">✨</span>
                     <div>
-                      <p className="text-sm font-bold text-amber-900">Pozor na chytáky!</p>
-                      <p className="text-xs text-amber-700">Kde studenti nejčastěji chybují u zkoušky</p>
+                      <p className="text-xs font-bold uppercase tracking-widest mb-1.5" style={{ color: '#818cf8' }}>Proč tě to zajímá</p>
+                      <p className="text-base leading-relaxed font-medium" style={{ color: '#e2e8f0' }}>{notes.introduction}</p>
                     </div>
                   </div>
-                  <CopyBtn onClick={() => navigator.clipboard.writeText(notes.exam_traps.join('\n'))} />
-                </div>
+                </motion.div>
+              )}
 
-                <div className="p-4 space-y-3">
-                  {notes.exam_traps.map((trap, i) => (
-                    <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.25 + i * 0.07 }}
-                      className="flex items-start gap-3 p-4 rounded-xl"
-                      style={{ background: 'rgba(255,255,255,0.65)', border: '1px solid rgba(245,158,11,0.15)' }}>
-                      <span className="shrink-0 text-lg mt-0.5">⚠️</span>
-                      <p className="text-sm text-amber-950 leading-relaxed">{trap}</p>
+              {/* TL;DR */}
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+                <div style={{ background: 'linear-gradient(135deg,#1e1b4b,#2d1f6e,#4c1d95)', borderRadius: '20px', padding: '28px 32px', boxShadow: '0 16px 48px rgba(79,46,220,0.35)' }}>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Zap className="w-4 h-4 text-indigo-300" strokeWidth={2.5} />
+                    <span className="text-xs font-bold text-indigo-300 uppercase tracking-widest">TL;DR — Esence za 10 sekund</span>
+                  </div>
+                  <p className="text-white text-xl sm:text-2xl font-bold leading-relaxed">{notes.tl_dr}</p>
+                  <div className="mt-5 flex justify-end">
+                    <button onClick={() => navigator.clipboard.writeText(notes.tl_dr)}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+                      style={{ background: 'rgba(255,255,255,0.10)', color: '#c4b5fd', border: '1px solid rgba(255,255,255,0.15)' }}>
+                      Kopírovat
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Deep Modules */}
+              {notes.deep_modules && notes.deep_modules.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 px-1">
+                    <Layers className="w-4 h-4" style={{ color: '#818cf8' }} strokeWidth={2} />
+                    <span className="text-xs font-bold uppercase tracking-widest" style={{ color: '#818cf8' }}>Studijní moduly</span>
+                    <span className="text-xs" style={{ color: '#334155' }}>({notes.deep_modules.length})</span>
+                  </div>
+                  {notes.deep_modules.map((mod, i) => (
+                    <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.12 + i * 0.07 }} className="rounded-2xl overflow-hidden"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      <div className="flex items-center gap-3 px-5 py-3.5"
+                        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)' }}>
+                        <span className="shrink-0 w-7 h-7 rounded-xl text-white text-xs font-black flex items-center justify-center"
+                          style={{ background: FACT_GRADIENTS[i % FACT_GRADIENTS.length] }}>{i + 1}</span>
+                        <h4 className="text-sm font-bold" style={{ color: '#f1f5f9' }}>{mod.title}</h4>
+                      </div>
+                      <div className="px-5 pt-4 pb-3">
+                        <p className="text-sm leading-relaxed" style={{ color: '#94a3b8' }}>{mod.explanation}</p>
+                      </div>
+                      <div className="mx-4 mb-4 flex items-start gap-2.5 px-4 py-3 rounded-xl"
+                        style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.15)' }}>
+                        <span className="text-base shrink-0 mt-0.5">🌍</span>
+                        <p className="text-sm italic leading-relaxed" style={{ color: '#c4b5fd' }}>{mod.analogy}</p>
+                      </div>
                     </motion.div>
                   ))}
                 </div>
-              </div>
-            </motion.div>
+              )}
 
-            {/* ── 4. Memory Hack — gradient border, premium feel ── */}
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32 }}>
-              {/* Gradient border wrapper */}
-              <div style={{ padding: '2px', borderRadius: '18px', background: 'linear-gradient(135deg,#6366f1,#a855f7,#ec4899)' }}>
+              {/* Exam Traps */}
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.22 }}>
                 <div className="rounded-2xl overflow-hidden"
-                  style={{ background: 'rgba(250,245,255,0.97)' }}>
-                  {/* Header */}
+                  style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.18)' }}>
                   <div className="flex items-center justify-between px-5 py-4"
-                    style={{ borderBottom: '1px solid rgba(167,139,250,0.2)', background: 'rgba(167,139,250,0.06)' }}>
+                    style={{ borderBottom: '1px solid rgba(245,158,11,0.12)' }}>
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                        style={{ background: 'linear-gradient(135deg,#a855f7,#ec4899)' }}>
-                        <Lightbulb className="w-4 h-4 text-white" strokeWidth={2} />
+                        style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
+                        <AlertTriangle className="w-4 h-4 text-white" strokeWidth={2.5} />
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-violet-900">Mnemotechnická pomůcka</p>
-                        <p className="text-xs text-violet-600">Trik pro zapamatování nejhůře uchopitelné části</p>
-                      </div>
+                      <p className="text-sm font-bold" style={{ color: '#fbbf24' }}>Pozor na chytáky!</p>
                     </div>
-                    <CopyBtn onClick={() => navigator.clipboard.writeText(notes.memory_hack)} />
+                    <button onClick={() => navigator.clipboard.writeText(notes.exam_traps.join('\n'))}
+                      className="text-xs px-2.5 py-1 rounded-lg"
+                      style={{ background: 'rgba(255,255,255,0.05)', color: '#64748b', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      Kopírovat
+                    </button>
                   </div>
-
-                  <div className="px-6 py-5">
-                    <p className="text-base text-violet-900 leading-relaxed font-medium italic">
-                      {notes.memory_hack}
-                    </p>
+                  <div className="p-4 space-y-2">
+                    {notes.exam_traps.map((trap, i) => (
+                      <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl"
+                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(245,158,11,0.10)' }}>
+                        <span className="shrink-0 text-base mt-0.5">⚠️</span>
+                        <p className="text-sm leading-relaxed" style={{ color: '#d4b896' }}>{trap}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-            </motion.div>
+              </motion.div>
 
-            {/* ── 5. Interactive Quiz ── */}
-            {notes.interactive_quiz && notes.interactive_quiz.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.42 }}
-                className="rounded-2xl overflow-hidden"
-                style={{
-                  background: 'rgba(255,255,255,0.75)',
-                  border: '1.5px solid rgba(255,255,255,0.92)',
-                  boxShadow: '0 8px 32px rgba(109,40,217,0.09)',
-                }}
-              >
-                <div
-                  className="px-5 py-4"
-                  style={{ borderBottom: '1px solid rgba(99,102,241,0.08)', background: 'rgba(99,102,241,0.03)' }}
-                >
-                  <p className="text-sm font-bold text-slate-800">🧩 Otestuj se</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Klikni na odpověď — ihned uvidíš vysvětlení</p>
-                </div>
-                <div className="p-4">
-                  <InteractiveQuiz questions={notes.interactive_quiz} />
+              {/* Memory Hack */}
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32 }}>
+                <div style={{ padding: '1.5px', borderRadius: '18px', background: 'linear-gradient(135deg,#6366f1,#a855f7,#ec4899)' }}>
+                  <div className="rounded-2xl overflow-hidden" style={{ background: '#0c0a1a' }}>
+                    <div className="flex items-center justify-between px-5 py-4"
+                      style={{ borderBottom: '1px solid rgba(167,139,250,0.12)' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+                          style={{ background: 'linear-gradient(135deg,#a855f7,#ec4899)' }}>
+                          <Lightbulb className="w-4 h-4 text-white" strokeWidth={2} />
+                        </div>
+                        <p className="text-sm font-bold" style={{ color: '#e9d5ff' }}>Mnemotechnická pomůcka</p>
+                      </div>
+                      <button onClick={() => navigator.clipboard.writeText(notes.memory_hack)}
+                        className="text-xs px-2.5 py-1 rounded-lg"
+                        style={{ background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        Kopírovat
+                      </button>
+                    </div>
+                    <div className="px-6 py-5">
+                      <p className="text-base leading-relaxed font-medium italic" style={{ color: '#d8b4fe' }}>
+                        {notes.memory_hack}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
-            )}
 
-            {/* ── Flashcards ── */}
-            {notes.flashcards && notes.flashcards.length > 0 && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.48 }}
-                className="rounded-2xl overflow-hidden"
-                style={{ background: 'rgba(255,255,255,0.75)', border: '1.5px solid rgba(255,255,255,0.92)', boxShadow: '0 8px 32px rgba(109,40,217,0.09)' }}>
-                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(99,102,241,0.08)', background: 'rgba(99,102,241,0.03)' }}>
-                  <p className="text-sm font-bold text-slate-800">{t.flashcards.tab}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{t.flashcards.clickToFlip}</p>
-                </div>
-                <div className="p-5">
-                  <FlashcardGroup flashcards={notes.flashcards} />
-                </div>
-              </motion.div>
-            )}
+              {/* Quiz */}
+              {notes.interactive_quiz && notes.interactive_quiz.length > 0 && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.42 }}
+                  className="rounded-2xl overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>🧩 Otestuj se</p>
+                    <p className="text-xs mt-0.5" style={{ color: '#475569' }}>Klikni na odpověď — ihned uvidíš vysvětlení</p>
+                  </div>
+                  <div className="p-4"><InteractiveQuiz questions={notes.interactive_quiz} /></div>
+                </motion.div>
+              )}
 
-            {/* ── Mind Map ── */}
-            {notes.mind_map_mermaid && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.50 }}
-                className="rounded-2xl overflow-hidden"
-                style={{ background: 'rgba(255,255,255,0.75)', border: '1.5px solid rgba(255,255,255,0.92)', boxShadow: '0 8px 32px rgba(109,40,217,0.09)' }}>
-                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(99,102,241,0.08)', background: 'rgba(99,102,241,0.03)' }}>
-                  <p className="text-sm font-bold text-slate-800">{t.teacher.tabs.mindMap}</p>
-                </div>
-                <div className="p-5">
-                  <MermaidDiagram chart={notes.mind_map_mermaid} />
-                </div>
-              </motion.div>
-            )}
+              {/* Flashcards */}
+              {notes.flashcards && notes.flashcards.length > 0 && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.48 }}
+                  className="rounded-2xl overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>{t.flashcards.tab}</p>
+                  </div>
+                  <div className="p-5"><FlashcardGroup flashcards={notes.flashcards} /></div>
+                </motion.div>
+              )}
 
-            {/* ── Interactive Game ── */}
-            {notes.interactive_game && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.52 }}
-                className="rounded-2xl overflow-hidden"
-                style={{ background: 'rgba(255,255,255,0.75)', border: '1.5px solid rgba(255,255,255,0.92)', boxShadow: '0 8px 32px rgba(109,40,217,0.09)' }}>
-                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(99,102,241,0.08)', background: 'rgba(99,102,241,0.03)' }}>
-                  <p className="text-sm font-bold text-slate-800">{t.game.tab}</p>
-                </div>
-                <div className="p-5">
-                  <InteractiveGame game={notes.interactive_game} />
-                </div>
-              </motion.div>
-            )}
+              {/* Mind Map */}
+              {notes.mind_map_mermaid && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.50 }}
+                  className="rounded-2xl overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>{t.teacher.tabs.mindMap}</p>
+                  </div>
+                  <div className="p-5"><MermaidDiagram chart={notes.mind_map_mermaid} /></div>
+                </motion.div>
+              )}
 
-            {/* Bottom copy-all action */}
-            <div className="flex justify-center pt-2 pb-4">
-              <div className="flex gap-3">
-                <CopyBtn onClick={() => navigator.clipboard.writeText(notesText)} label={st.copyAll} />
+              {/* Game */}
+              {notes.interactive_game && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.52 }}
+                  className="rounded-2xl overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>{t.game.tab}</p>
+                  </div>
+                  <div className="p-5"><InteractiveGame game={notes.interactive_game} /></div>
+                </motion.div>
+              )}
+
+              {/* Bottom actions */}
+              <div className="flex justify-center gap-3 pt-2 pb-6">
+                <button onClick={() => navigator.clipboard.writeText(notesText)}
+                  className="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: '#64748b' }}>
+                  <Copy className="w-4 h-4" />{st.copyAll}
+                </button>
                 <button onClick={handlePDF}
-                  className="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl border transition-all"
-                  style={{ background: 'rgba(255,255,255,0.7)', border: '1.5px solid rgba(255,255,255,0.85)', color: '#64748b' }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(236,72,153,0.4)'; e.currentTarget.style.color = '#db2777' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.85)'; e.currentTarget.style.color = '#64748b' }}>
+                  className="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: '#64748b' }}>
                   <Download className="w-4 h-4" />{st.downloadPDF}
                 </button>
               </div>
-            </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-          </motion.div>
+        <FloatingChat
+          documentContext={notes
+            ? buildStudentDocContext(notes, inputMode === 'notes' ? 'Vlastní zápisky' : topic, level)
+            : null}
+        />
+
+      {/* ── Bento feature demo modals ── */}
+      <AnimatePresence>
+        {bentoModal && (
+          <>
+            <motion.div key="bento-bd" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+              onClick={() => setBentoModal(null)}
+              className="fixed inset-0 z-50"
+              style={{ background:'rgba(0,0,0,0.80)', backdropFilter:'blur(6px)' }} />
+
+            <motion.div key="bento-modal"
+              initial={{ opacity:0, scale:0.93, y:20 }} animate={{ opacity:1, scale:1, y:0 }}
+              exit={{ opacity:0, scale:0.93, y:20 }}
+              transition={{ duration:0.22, ease:[0.22,1,0.36,1] }}
+              className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 px-4">
+              <div className="rounded-3xl overflow-hidden"
+                style={{ background:'#080814', border:'1px solid rgba(99,102,241,0.22)', boxShadow:'0 32px 80px rgba(0,0,0,0.80)', backdropFilter:'blur(20px)' }}>
+                <div className="h-0.5 w-full" style={{ background:
+                  bentoModal==='podcast'?'linear-gradient(90deg,#db2777,#f472b6)':
+                  bentoModal==='quiz'?'linear-gradient(90deg,#6366f1,#a855f7)':
+                  bentoModal==='flashcards'?'linear-gradient(90deg,#059669,#34d399)':
+                  'linear-gradient(90deg,#d97706,#fbbf24)' }} />
+                <div className="p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-black" style={{ color:'#f1f5f9' }}>
+                      {bentoModal==='podcast'?'🎧 Audio Tutor — Demo':
+                       bentoModal==='quiz'?'🧩 Interaktivní kvíz — Demo':
+                       bentoModal==='flashcards'?'🃏 Flashkarty — Demo':'🕹️ Minigra — Demo'}
+                    </p>
+                    <button onClick={() => setBentoModal(null)} className="text-lg hover:opacity-70" style={{ color:'#475569' }}>✕</button>
+                  </div>
+
+                  {bentoModal==='podcast' && (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl p-4" style={{ background:'rgba(219,39,119,0.08)', border:'1px solid rgba(219,39,119,0.18)' }}>
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full" style={{ background:'rgba(219,39,119,0.15)', border:'1px solid rgba(219,39,119,0.30)' }}>
+                            <span>👩‍🏫</span><span className="text-xs font-bold" style={{ color:'#f472b6' }}>Učitelka</span>
+                            {bentoAudioPlaying && <motion.span animate={{ opacity:[1,0.2,1] }} transition={{ duration:0.9, repeat:Infinity }} className="w-1.5 h-1.5 rounded-full" style={{ background:'#db2777' }} />}
+                          </div>
+                          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full" style={{ background:'rgba(99,102,241,0.10)', border:'1px solid rgba(99,102,241,0.20)' }}>
+                            <span>👨‍🎓</span><span className="text-xs font-bold" style={{ color:'#818cf8' }}>Student</span>
+                          </div>
+                        </div>
+                        <div className="flex items-end gap-[3px] h-8">
+                          {Array.from({length:20},(_,i)=>i).map(i => (
+                            <motion.div key={i} className="w-[3px] rounded-full flex-1"
+                              style={{ background:'linear-gradient(to top,#db2777,#f472b6)' }}
+                              animate={bentoAudioPlaying?{scaleY:[0.2,1,0.3,0.8,0.15,1,0.5]}:{scaleY:0.12}}
+                              transition={{ duration:0.55+(i%4)*0.12, repeat:bentoAudioPlaying?Infinity:0, ease:'easeInOut', delay:i*0.04 }} />
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-xs italic" style={{ color:'#64748b' }}>&ldquo;Hele, víš co je na fotosyntéze úplně fascinující? Hmm — počkej, tohle mě taky dostalo...&rdquo;</p>
+                      <button onClick={() => setBentoAudioPlaying(p=>!p)}
+                        className="w-full py-3 rounded-2xl font-bold text-sm text-white"
+                        style={{ background:'linear-gradient(135deg,#db2777,#f472b6)', boxShadow:'0 4px 16px rgba(219,39,119,0.40)' }}>
+                        {bentoAudioPlaying?'⏸ Pozastavit':'▶ Přehrát demo podcast'}
+                      </button>
+                    </div>
+                  )}
+
+                  {bentoModal==='quiz' && (
+                    <div className="space-y-3">
+                      <p className="text-sm font-bold" style={{ color:'#e2e8f0' }}>Která z možností NENÍ výsledkem fotosyntézy?</p>
+                      {['Kyslík (O₂)','Glukóza (C₆H₁₂O₆)','Oxid uhličitý (CO₂)','ATP energie'].map((opt,i)=>(
+                        <div key={opt} className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
+                          style={{ background:i===2?'rgba(5,150,105,0.15)':'rgba(255,255,255,0.04)', border:i===2?'1px solid rgba(5,150,105,0.40)':'1px solid rgba(255,255,255,0.07)', color:i===2?'#34d399':'#94a3b8' }}>
+                          <span className="w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center shrink-0"
+                            style={{ background:i===2?'rgba(5,150,105,0.25)':'rgba(255,255,255,0.06)', color:i===2?'#34d399':'#64748b' }}>
+                            {['A','B','C','D'][i]}
+                          </span>
+                          <span className="text-sm flex-1">{opt}</span>
+                          {i===2&&<span className="text-xs font-bold" style={{ color:'#34d399' }}>✓</span>}
+                        </div>
+                      ))}
+                      <p className="text-xs px-1" style={{ color:'#64748b' }}>💡 CO₂ je vstupní surovina fotosyntézy, ne produkt.</p>
+                    </div>
+                  )}
+
+                  {bentoModal==='flashcards' && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-center" style={{ color:'#475569' }}>Klikni na kartu pro otočení</p>
+                      <button onClick={() => setBentoFlipped(f=>!f)}
+                        className="w-full h-32 rounded-2xl flex items-center justify-center p-6 transition-all"
+                        style={{ background:bentoFlipped?'rgba(5,150,105,0.12)':'rgba(99,102,241,0.10)', border:bentoFlipped?'1px solid rgba(5,150,105,0.35)':'1px solid rgba(99,102,241,0.30)' }}>
+                        <motion.p key={String(bentoFlipped)} initial={{ opacity:0, rotateY:90 }} animate={{ opacity:1, rotateY:0 }}
+                          transition={{ duration:0.25 }} className="text-base font-bold text-center"
+                          style={{ color:bentoFlipped?'#34d399':'#a78bfa' }}>
+                          {bentoFlipped?'Přeměna světelné energie na chemickou (glukózu) pomocí chlorofylu':'Fotosyntéza'}
+                        </motion.p>
+                      </button>
+                      <p className="text-xs text-center" style={{ color:'#334155' }}>Pojem 1 z 10 · {bentoFlipped?'Definice — klikni zpět':'Klikni pro definici →'}</p>
+                    </div>
+                  )}
+
+                  {bentoModal==='game' && (
+                    <div className="space-y-3">
+                      <p className="text-xs" style={{ color:'#64748b' }}>Přiřaď pojmy k definicím:</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[['Chlorofyl','Zelené barvivo'],['Stomata','Průduchy listu'],['Glukóza','Cukr = energie']].map(([t,d])=>(
+                          <div key={t} className="contents">
+                            <div className="px-3 py-2 rounded-xl text-xs font-bold" style={{ background:'rgba(99,102,241,0.12)', border:'1px solid rgba(99,102,241,0.25)', color:'#a78bfa' }}>{t}</div>
+                            <div className="px-3 py-2 rounded-xl text-xs font-medium" style={{ background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', color:'#64748b' }}>{d}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-center" style={{ color:'#334155' }}>Generuj téma pro plnou hru ↑</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
 
-      {/* ── AI Tutor chat ── */}
-      <FloatingChat
-        documentContext={notes
-          ? buildStudentDocContext(notes, inputMode === 'notes' ? 'Vlastní zápisky' : topic, level)
-          : null}
-      />
+      </div>
     </div>
   )
 }

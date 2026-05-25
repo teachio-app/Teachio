@@ -19,8 +19,17 @@ export async function login(formData: FormData) {
     redirect(`/login?error=${encodeURIComponent(message)}`)
   }
 
+  // Redirect to the correct dashboard based on role
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user!.id)
+    .single()
+
   revalidatePath('/', 'layout')
-  redirect('/generator')
+  const role = profile?.role as 'teacher' | 'student' | null
+  redirect(role === 'student' ? '/student' : role === 'teacher' ? '/teacher' : '/onboarding')
 }
 
 export async function signup(formData: FormData) {
@@ -33,13 +42,28 @@ export async function signup(formData: FormData) {
     redirect('/signup?error=' + encodeURIComponent('Heslo musí mít alespoň 6 znaků.'))
   }
 
-  const { error } = await supabase.auth.signUp({ email, password })
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://apka-chi.vercel.app'
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: `${siteUrl}/auth/callback?next=/onboarding`,
+    },
+  })
 
   if (error) {
     redirect('/signup?error=' + encodeURIComponent('Registrace selhala: ' + error.message))
   }
 
-  redirect('/login?message=' + encodeURIComponent('Účet byl vytvořen. Přihlaste se.'))
+  // If Supabase returned a session immediately, email confirmation is disabled → go straight in
+  if (data.session) {
+    revalidatePath('/', 'layout')
+    redirect('/onboarding')
+  }
+
+  // Email confirmation required → tell user to check their inbox
+  redirect('/login?message=' + encodeURIComponent('Účet vytvořen! Zkontrolujte e-mail a klikněte na potvrzovací odkaz.'))
 }
 
 export async function logout() {

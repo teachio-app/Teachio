@@ -62,7 +62,7 @@ export interface AcademicTopic {
   key_authors: string
 }
 
-// ── Phase 1: Astra Deep Structure ─────────────────────────────────────────────
+// ── Content module types ──────────────────────────────────────────────────────
 
 /** A self-contained learning module: concept + explanation + analogy */
 export interface StudyModule {

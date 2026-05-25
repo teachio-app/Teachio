@@ -15,7 +15,7 @@ export const translations = {
       home: '🏠 Domů',
       generator: 'Generátor', notes: 'Výpisky', history: 'Historie',
       logout: 'Odhlásit', teacherBadge: 'Učitel', studentBadge: 'Student',
-      research: '🔬 Research Lab', grader: '📝 Hodnotitel esejí', pricing: '⭐ Premium',
+      research: '🔬 Research Lab', grader: '📝 Hodnotitel esejí', pricing: '⭐ Premium', files: '📂 Moje soubory',
     },
     common: {
       copy: 'Kopírovat', copied: 'Zkopírováno', downloadPDF: '⬇ PDF',
@@ -138,7 +138,7 @@ export const translations = {
       home: '🏠 Home',
       generator: 'Generator', notes: 'Notes', history: 'History',
       logout: 'Log out', teacherBadge: 'Teacher', studentBadge: 'Student',
-      research: '🔬 Research Lab', grader: '📝 Essay Grader', pricing: '⭐ Premium',
+      research: '🔬 Research Lab', grader: '📝 Essay Grader', pricing: '⭐ Premium', files: '📂 My Files',
     },
     common: {
       copy: 'Copy', copied: 'Copied', downloadPDF: '⬇ PDF',
@@ -260,7 +260,7 @@ export const translations = {
       home: '🏠 Startseite',
       generator: 'Generator', notes: 'Notizen', history: 'Verlauf',
       logout: 'Abmelden', teacherBadge: 'Lehrer/in', studentBadge: 'Student/in',
-      research: '🔬 Forschungslabor', grader: '📝 Aufsatz-Bewerter', pricing: '⭐ Premium',
+      research: '🔬 Forschungslabor', grader: '📝 Aufsatz-Bewerter', pricing: '⭐ Premium', files: '📂 Meine Dateien',
     },
     common: {
       copy: 'Kopieren', copied: 'Kopiert', downloadPDF: '⬇ PDF',
@@ -382,7 +382,7 @@ export const translations = {
       home: '🏠 Accueil',
       generator: 'Générateur', notes: 'Notes', history: 'Historique',
       logout: 'Se déconnecter', teacherBadge: 'Enseignant(e)', studentBadge: 'Étudiant(e)',
-      research: '🔬 Labo Recherche', grader: '📝 Correcteur', pricing: '⭐ Premium',
+      research: '🔬 Labo Recherche', grader: '📝 Correcteur', pricing: '⭐ Premium', files: '📂 Mes fichiers',
     },
     common: {
       copy: 'Copier', copied: 'Copié', downloadPDF: '⬇ PDF',

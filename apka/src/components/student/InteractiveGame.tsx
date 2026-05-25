@@ -125,17 +125,25 @@ function SortingGame({ game }: { game: GameData }) {
 function MatchingGame({ game }: { game: GameData }) {
   const { t } = useLanguage()
   const g = t.game
-  const pairs = game.items as GameMatchingPair[]
 
-  // Shuffle right column once; build lookup: shuffled-right-index → original-pair-index
-  const [shuffledRight] = useState<string[]>(() => shuffle(pairs.map(p => p.right)))
+  // Deduplicate pairs by left value so no term appears twice on the left
+  const pairs = useMemo(() => {
+    const seen = new Set<string>()
+    return (game.items as GameMatchingPair[]).filter(p => {
+      if (seen.has(p.left)) return false
+      seen.add(p.left)
+      return true
+    })
+  }, [game.items])
+
+  const [shuffledRight, setShuffledRight] = useState<string[]>(() => shuffle(pairs.map(p => p.right)))
   const rightToLeft = useMemo(
     () => shuffledRight.map(rt => pairs.findIndex(p => p.right === rt)),
     [shuffledRight, pairs]
   )
 
   const [selectedLeft,  setSelectedLeft]  = useState<number | null>(null)
-  const [matched,       setMatched]       = useState<Set<number>>(new Set())   // left indices
+  const [matched,       setMatched]       = useState<Set<number>>(new Set())
   const [wrongLeft,     setWrongLeft]     = useState<number | null>(null)
   const [wrongRight,    setWrongRight]    = useState<number | null>(null)
 
@@ -152,11 +160,9 @@ function MatchingGame({ game }: { game: GameData }) {
   function handleRight(ri: number) {
     if (isRightMatched(ri) || selectedLeft === null || wrongLeft !== null) return
     if (rightToLeft[ri] === selectedLeft) {
-      // Correct match
       setMatched(prev => new Set([...prev, selectedLeft]))
       setSelectedLeft(null)
     } else {
-      // Wrong — animate shake, then deselect
       setWrongLeft(selectedLeft)
       setWrongRight(ri)
       setTimeout(() => {
@@ -172,6 +178,8 @@ function MatchingGame({ game }: { game: GameData }) {
     setMatched(new Set())
     setWrongLeft(null)
     setWrongRight(null)
+    // Reshuffle right column so positions change on every replay
+    setShuffledRight(shuffle(pairs.map(p => p.right)))
   }
 
   function colButton(

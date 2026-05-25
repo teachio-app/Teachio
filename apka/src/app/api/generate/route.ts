@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient } from '@/lib/supabase/server'
 import { generateMaterials, getGradeCategory } from '@/lib/templates/generator'
-import { tryUseCredit } from '@/lib/actions/credits'
+import { tryUseCredit, trackCreditUsed } from '@/lib/actions/credits'
 import { buildLangDirective } from '@/lib/i18n/langDirective'
 import { TEACHIO_IDENTITY } from '@/lib/teachioIdentity'
 import type {
@@ -260,7 +260,7 @@ export async function POST(req: NextRequest) {
     if (user) {
       authedUserId = user.id
       const creditResult = await tryUseCredit(user.id)
-      if (creditResult === 'no_credits') {
+      if (creditResult !== 'ok') {
         return NextResponse.json({ error: 'insufficient_credits' }, { status: 403 })
       }
     }
@@ -303,6 +303,7 @@ export async function POST(req: NextRequest) {
 
   if (authedUserId) {
     saveLesson(authedUserId, topic.trim(), grade, durationNum, result).catch(() => {})
+    trackCreditUsed(authedUserId).catch(() => {})
   }
 
   return NextResponse.json(result)
