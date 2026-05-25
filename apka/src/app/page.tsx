@@ -80,7 +80,7 @@ export default async function LandingPage() {
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
           }}>
-            Hlava se láme jako chleba
+            chleba chleba
           </span>
         </h1>
 
