@@ -80,7 +80,7 @@ export default async function LandingPage() {
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
           }}>
-            chleba chleba
+            Uč se jako nikdy předtím.
           </span>
         </h1>
 
