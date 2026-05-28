@@ -57,7 +57,7 @@ export default function StudijniPlanPage() {
   return (
     <PublicShell>
       {/* ── HERO ── */}
-      <section style={{ padding: '96px 24px 60px', textAlign: 'center', maxWidth: 680, margin: '0 auto' }}>
+      <section style={{ padding: '60px 24px 28px', textAlign: 'center', maxWidth: 680, margin: '0 auto' }}>
         <div className="pub-au pub-au1" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 16px', borderRadius: 100, background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.25)', marginBottom: 28 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', letterSpacing: '0.06em', textTransform: 'uppercase' }}>📅 Studijní plány</span>
         </div>
@@ -73,7 +73,7 @@ export default function StudijniPlanPage() {
       </section>
 
       {/* ── PLANS ── */}
-      <section style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px 100px' }}>
+      <section style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px 64px' }}>
         {!loaded ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: MUT }}>Načítám…</div>
         ) : plans.length === 0 ? (

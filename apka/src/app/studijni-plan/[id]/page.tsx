@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { PublicShell } from '@/components/ui/PublicShell'
 import Link from 'next/link'
 
@@ -79,7 +79,6 @@ const PHASE_COLORS: Record<string, string> = {
 
 export default function PlanDashboardPage() {
   const params  = useParams()
-  const router  = useRouter()
   const id = params?.id as string
 
   const [plan, setPlan]       = useState<FullPlan | null>(null)
@@ -95,7 +94,6 @@ export default function PlanDashboardPage() {
       if (raw) {
         const p = JSON.parse(raw) as FullPlan
         setPlan(p)
-        // Find today's day
         const todayDay = p.days?.find(d => d.isToday) ?? p.days?.[0] ?? null
         setActiveDay(todayDay)
       }
@@ -105,10 +103,13 @@ export default function PlanDashboardPage() {
 
   const markComplete = (dayNum: number) => {
     if (!plan) return
-    const updated = {
-      ...plan,
-      completedSessions: Math.min((plan.completedSessions ?? 0) + 1, plan.totalSessions),
-    }
+    const doneCount = Math.min((plan.completedSessions ?? 0) + 1, plan.totalSessions)
+    // Advance isToday to the next incomplete lesson so the card auto-advances
+    const updatedDays = (plan.days ?? []).map((d, i) => ({
+      ...d,
+      isToday: i === doneCount,
+    }))
+    const updated = { ...plan, completedSessions: doneCount, days: updatedDays }
     setPlan(updated)
     try {
       localStorage.setItem(`teachio:plan:${id}`, JSON.stringify(updated))
@@ -116,7 +117,10 @@ export default function PlanDashboardPage() {
       if (listRaw) {
         const list = JSON.parse(listRaw) as FullPlan[]
         const idx = list.findIndex(p => p.id === id)
-        if (idx >= 0) { list[idx] = { ...list[idx], completedSessions: updated.completedSessions }; localStorage.setItem('teachio:plans:v1', JSON.stringify(list)) }
+        if (idx >= 0) {
+          list[idx] = { ...list[idx], completedSessions: doneCount }
+          localStorage.setItem('teachio:plans:v1', JSON.stringify(list))
+        }
       }
     } catch {}
   }
@@ -148,14 +152,18 @@ export default function PlanDashboardPage() {
   const circ    = 2 * Math.PI * radius
   const offset  = circ * (1 - pct / 100)
 
-  const todayDay   = plan.days?.find(d => d.isToday) ?? plan.days?.[0]
+  // Derived from state — re-evaluates after markComplete updates plan.days
+  const todayDay   = plan.days?.find(d => d.isToday) ?? plan.days?.[done] ?? plan.days?.[0]
   const allDays    = plan.days ?? []
   const phaseColor = (phase: string) => PHASE_COLORS[phase.toUpperCase().split(' ')[0]] ?? '#7c3aed'
 
-  // Week slice
   const todayIdx  = allDays.findIndex(d => d.isToday)
   const weekStart = Math.max(0, (todayIdx >= 0 ? todayIdx : 0) + weekOffset * 7)
   const weekDays  = allDays.slice(weekStart, weekStart + 7)
+
+  // Activity links: open lesson page pre-seeded to the right tab
+  const lessonHref = (day: DayPlan, act?: string) =>
+    `/studijni-plan/${id}/lekce/${day.dayNumber}${act ? `?act=${act}` : ''}`
 
   return (
     <PublicShell compact>
@@ -166,10 +174,10 @@ export default function PlanDashboardPage() {
           ← Moje plány
         </Link>
 
-        {/* ── TOP HERO ── */}
+        {/* TOP HERO */}
         <div className="pub-au" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24, marginBottom: 28 }}>
           {/* Left: title + countdown */}
-          <div style={{ padding: '28px 32px', background: BG2, border: `1px solid rgba(124,58,237,0.18)`, borderRadius: 20 }}>
+          <div style={{ padding: '28px 32px', background: BG2, border: '1px solid rgba(124,58,237,0.18)', borderRadius: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Studijní plán</div>
             <h1 style={{ ...serif, fontSize: 'clamp(22px,3vw,32px)', fontWeight: 900, color: TEXT, lineHeight: 1.15, marginBottom: 10 }}>{plan.subject}</h1>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -215,15 +223,15 @@ export default function PlanDashboardPage() {
           </div>
         </div>
 
-        {/* ── DAY STRIP ── */}
+        {/* DAY STRIP */}
         {allDays.length > 0 && (
           <div className="pub-au" style={{ marginBottom: 28, padding: '16px', background: BG2, border: `1px solid ${BD}`, borderRadius: 16, overflowX: 'auto' }}>
             <div style={{ display: 'flex', gap: 6, minWidth: 'max-content' }}>
               {allDays.slice(0, Math.min(allDays.length, 40)).map((d, i) => {
-                const isToday = d.isToday
-                const isDone  = i < done
+                const isToday  = d.isToday
+                const isDone   = i < done
                 const isMissed = !isToday && !isDone && i < (todayIdx >= 0 ? todayIdx : 0)
-                const color = isDone ? '#4ade80' : isMissed ? '#fca5a5' : isToday ? '#a78bfa' : 'rgba(255,255,255,0.12)'
+                const color    = isDone ? '#4ade80' : isMissed ? '#fca5a5' : isToday ? '#a78bfa' : 'rgba(255,255,255,0.12)'
                 return (
                   <div key={d.dayNumber}
                     title={`${formatDate(d.date, true)} — ${d.title || 'Den ' + d.dayNumber}`}
@@ -244,7 +252,7 @@ export default function PlanDashboardPage() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
 
-          {/* ── TODAY CARD ── */}
+          {/* TODAY CARD */}
           {todayDay && (
             <div className="pub-au" style={{ padding: '24px', background: 'rgba(124,58,237,0.06)', border: '1px solid rgba(124,58,237,0.22)', borderRadius: 20 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
@@ -257,21 +265,23 @@ export default function PlanDashboardPage() {
                 <span style={{ padding: '4px 10px', borderRadius: 100, background: `${phaseColor(todayDay.phase)}20`, border: `1px solid ${phaseColor(todayDay.phase)}40`, fontSize: 11, fontWeight: 700, color: phaseColor(todayDay.phase) }}>{todayDay.phase}</span>
               </div>
 
-              {/* Tools */}
+              {/* Activity buttons — all open the lesson view, each on the right tab */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                {[
-                  { emoji: '🎧', label: 'Podcast',   href: '/student', color: '#f472b6' },
-                  { emoji: '🧩', label: 'Kvíz',      href: '/student', color: '#34d399' },
-                  { emoji: '🃏', label: 'Karty',      href: '/student', color: '#a78bfa' },
-                  { emoji: '🕹️', label: 'Hra',        href: '/student', color: '#fbbf24' },
-                ].map(t => (
-                  <Link key={t.label} href={t.href} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '8px 12px', borderRadius: 10, background: BG2, border: `1px solid ${BD}`, textDecoration: 'none', fontSize: 13, fontWeight: 600, color: t.color, transition: 'all 0.15s' }}>
+                {([
+                  { emoji: '🎧', label: 'Podcast', act: 'podcast', color: '#f472b6' },
+                  { emoji: '🧩', label: 'Kvíz',    act: 'kviz',    color: '#34d399' },
+                  { emoji: '🃏', label: 'Karty',   act: 'karty',   color: '#a78bfa' },
+                  { emoji: '🕹️', label: 'Hra',     act: 'hra',     color: '#fbbf24' },
+                ] as const).map(t => (
+                  <Link key={t.label} href={lessonHref(todayDay, t.act)}
+                    style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '8px 12px', borderRadius: 10, background: BG2, border: `1px solid ${BD}`, textDecoration: 'none', fontSize: 13, fontWeight: 600, color: t.color, transition: 'all 0.15s' }}>
                     <span>{t.emoji}</span><span>{t.label}</span>
                   </Link>
                 ))}
               </div>
 
-              <Link href="/student" style={{ display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12, background: 'linear-gradient(135deg,#6366f1,#7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, textDecoration: 'none', boxShadow: '0 4px 16px rgba(124,58,237,0.40)', marginBottom: 10 }}>
+              <Link href={lessonHref(todayDay)}
+                style={{ display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12, background: 'linear-gradient(135deg,#6366f1,#7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, textDecoration: 'none', boxShadow: '0 4px 16px rgba(124,58,237,0.40)', marginBottom: 10 }}>
                 Začít učení →
               </Link>
               <button onClick={() => markComplete(todayDay.dayNumber)}
@@ -287,7 +297,7 @@ export default function PlanDashboardPage() {
             </div>
           )}
 
-          {/* ── WEEKLY SCHEDULE ── */}
+          {/* WEEKLY SCHEDULE */}
           <div className="pub-au pub-au2" style={{ padding: '24px', background: BG2, border: `1px solid ${BD}`, borderRadius: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Týdenní přehled</div>
@@ -317,7 +327,7 @@ export default function PlanDashboardPage() {
           </div>
         </div>
 
-        {/* ── PHASES OVERVIEW ── */}
+        {/* PHASES OVERVIEW */}
         {plan.phases && plan.phases.length > 0 && (
           <div className="pub-au" style={{ marginTop: 20, padding: '24px', background: BG2, border: `1px solid ${BD}`, borderRadius: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 16 }}>Fáze plánu</div>
@@ -334,11 +344,11 @@ export default function PlanDashboardPage() {
           </div>
         )}
 
-        {/* ── DAY DETAIL DRAWER ── */}
+        {/* DAY DETAIL DRAWER */}
         {showDrawer && activeDay && (
           <>
             <div onClick={() => setShowDrawer(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 200 }} />
-            <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 380, maxWidth: '90vw', background: '#09071a', borderLeft: `1px solid rgba(124,58,237,0.25)`, zIndex: 201, overflowY: 'auto', padding: '28px' }}>
+            <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 380, maxWidth: '90vw', background: '#09071a', borderLeft: '1px solid rgba(124,58,237,0.25)', zIndex: 201, overflowY: 'auto', padding: '28px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Den {activeDay.dayNumber}</div>
                 <button onClick={() => setShowDrawer(false)} style={{ background: 'transparent', border: 'none', color: MUT, fontSize: 18, cursor: 'pointer', padding: '4px 8px' }}>✕</button>
@@ -375,7 +385,9 @@ export default function PlanDashboardPage() {
                 </div>
               )}
 
-              <Link href="/student" style={{ display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12, background: 'linear-gradient(135deg,#6366f1,#7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, textDecoration: 'none', marginTop: 8, boxShadow: '0 4px 16px rgba(124,58,237,0.40)' }}>
+              {/* Drawer CTA: open the lesson view for this specific day */}
+              <Link href={lessonHref(activeDay)}
+                style={{ display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12, background: 'linear-gradient(135deg,#6366f1,#7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, textDecoration: 'none', marginTop: 8, boxShadow: '0 4px 16px rgba(124,58,237,0.40)' }}>
                 Začít učení →
               </Link>
             </div>
