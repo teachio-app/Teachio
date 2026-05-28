@@ -1261,7 +1261,7 @@ export default function StudentPage() {
                       <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl"
                         style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(245,158,11,0.10)' }}>
                         <span className="shrink-0 text-base mt-0.5">⚠️</span>
-                        <p className="text-sm leading-relaxed" style={{ color: '#d4b896' }}>{trap}</p>
+                        <p className="text-sm leading-relaxed" style={{ color: '#d4b896' }}>{trap.replace(/^⚠️\s*/, '')}</p>
                       </div>
                     ))}
                   </div>

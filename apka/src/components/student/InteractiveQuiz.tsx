@@ -146,7 +146,7 @@ function QuestionCard({
             >
               {!isCorrect && (
                 <p className="text-xs font-bold mb-1.5" style={{ color: '#dc2626' }}>
-                  Vybrali jste {LETTERS[selected!]} — správně je {LETTERS[q.correct_index]}
+                  Zvolil(a) jsi {LETTERS[selected!]} — správně je {LETTERS[q.correct_index]}
                 </p>
               )}
               <p className="text-sm leading-relaxed" style={{ color: isCorrect ? '#065f46' : '#7f1d1d' }}>
