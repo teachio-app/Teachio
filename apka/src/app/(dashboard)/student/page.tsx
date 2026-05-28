@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { ExamCalendar, type ExamCalendarHandle } from '@/components/student/ExamCalendar'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -11,6 +13,8 @@ import {
 } from 'lucide-react'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
 import type { SmartNotes, StudyLevel, ExamGoal } from '@/types'
+import { saveSession, appendHistory, detectTools } from '@/lib/studyHistory'
+import { OnboardingTooltip } from '@/components/student/OnboardingTooltip'
 
 // ── Lazy-loaded heavy components (only bundled when results are shown) ─────────
 const InteractiveQuiz = dynamic(() => import('@/components/student/InteractiveQuiz').then(m => ({ default: m.InteractiveQuiz })), { ssr: false })
@@ -44,6 +48,15 @@ type InputMode = 'topic' | 'notes'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const UPLOAD_PHASES = [
+  'Nahrávám soubor…',
+  'Čtu PDF…',
+  'Detekcuji skenované stránky…',
+  'Rozpoznávám text (OCR)…',
+  'Extrahuji obsah…',
+  'Analyzuji pojmy…',
+]
+
 const STUDY_LEVELS: StudyLevel[] = ['ZŠ', 'SŠ', 'VŠ']
 
 const LEVEL_META: Record<StudyLevel, { label: string; desc: string }> = {
@@ -65,7 +78,7 @@ const EXAM_GOALS: ExamGoalOption[] = [
   {
     value: 'bezna-pisemka',
     icon: '📝',
-    label: 'Běžná písemka / Test',
+    label: 'Školní písemka',
     desc: 'Standardní školní přezkoušení',
     accent: '#6366f1',
     bg: 'rgba(99,102,241,0.07)',
@@ -81,7 +94,7 @@ const EXAM_GOALS: ExamGoalOption[] = [
   {
     value: 'maturita',
     icon: '🎓',
-    label: 'Maturita / Didakt. test',
+    label: 'Maturita',
     desc: 'Státní standardy, didaktické pasti',
     accent: '#db2777',
     bg: 'rgba(219,39,119,0.07)',
@@ -89,7 +102,7 @@ const EXAM_GOALS: ExamGoalOption[] = [
   {
     value: 'statni-zaverecne',
     icon: '🏛',
-    label: 'Státní zkoušky (VŠ)',
+    label: 'Státní zkoušky',
     desc: 'Akademická rigoróznost, teorie',
     accent: '#d97706',
     bg: 'rgba(217,119,6,0.07)',
@@ -114,25 +127,36 @@ const GOAL_BY_LEVEL: Record<StudyLevel, ExamGoal[]> = {
 function getGoalMeta(goal: ExamGoal, level: StudyLevel) {
   const base = EXAM_GOALS.find(g => g.value === goal)!
   if (goal === 'bezna-pisemka' && level === 'VŠ') {
-    return { ...base, label: 'Běžná zkouška', desc: 'Standardní semestrální zkouška' }
+    return { ...base, label: 'Semestrální zkouška', desc: 'Standardní semestrální zkouška' }
   }
   return base
 }
 
 const LOADING_MESSAGES = [
-  'Procházím studijní materiály…',
-  'Identifikuji klíčové pojmy…',
-  'Hledám chytáky pro zkoušku…',
-  'Připravuji mnemotechniku…',
-  'Finalizuji chytré výpisky…',
+  '🔍 Hledám chytáky pro zkoušku…',
+  '📚 Identifikuji klíčové pojmy…',
+  '🎧 Připravuji výukový podcast…',
+  '✍️ Finalizuji chytré výpisky…',
+  '🧩 Generuji interaktivní kvíz…',
+  '🗓️ Sestavuji studijní přehled…',
 ]
 
 const BYON_LOADING_MESSAGES = [
-  'Čtu tvoje zápisky…',
-  'Identifikuji klíčové pojmy…',
-  'Organizuji obsah do modulů…',
-  'Tvořím kvíz z tvých zápisků…',
-  'Finalizuji studijní přehled…',
+  '📖 Čtu tvoje zápisky…',
+  '🔍 Identifikuji klíčové pojmy…',
+  '📂 Organizuji obsah do modulů…',
+  '🎧 Připravuji podcast z tvých zápisků…',
+  '🧩 Tvořím kvíz na míru…',
+  '✨ Finalizuji studijní přehled…',
+]
+
+const STUDY_FACTS = [
+  'Mozek si pamatuje lépe, když látku opakuješ s rozestupem (spaced repetition).',
+  'Aktivní vybavování informací je 2× efektivnější než pasivní čtení.',
+  'Vysvětlení pojmu vlastními slovy zvýší jeho zapamatování o 40 %.',
+  'Krátké přestávky každých 25 minut zvyšují soustředěnost a výkon.',
+  'Spánek po učení konsoliduje vzpomínky — nečti celou noc!',
+  'Psaní rukou pomáhá lépe zpracovat a zapamatovat si informace.',
 ]
 
 // No hard front-end limit — backend handles large texts
@@ -193,11 +217,11 @@ function CopyBtn({ onClick, label = 'Kopírovat' }: { onClick: () => void; label
   const handle = () => { onClick(); setDone(true); setTimeout(() => setDone(false), 2000) }
   return (
     <button onClick={handle}
-      className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
-        done
-          ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
-          : 'bg-white/60 border-white/70 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/80'
-      }`}>
+      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+      style={done
+        ? { background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.30)', color: '#6ee7b7' }
+        : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)', color: '#62627a' }
+      }>
       {done ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
       {done ? 'Zkopírováno' : label}
     </button>
@@ -208,35 +232,29 @@ function LoadingState({ message }: { message: string }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto">
       <div className="rounded-2xl p-10 text-center space-y-6"
-        style={{ background: 'rgba(255,255,255,0.82)', border: '1.5px solid rgba(255,255,255,0.9)', boxShadow: '0 8px 32px rgba(109,40,217,0.09)' }}>
-
-        {/* Pulsing brain icon */}
+        style={{ background: 'rgba(17,17,24,0.95)', border: '1px solid rgba(124,58,237,0.25)', boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}>
         <div className="flex justify-center">
           <motion.div
             animate={{ scale: [1, 1.08, 1], opacity: [0.85, 1, 0.85] }}
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-            className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-xl"
-            style={{ background: 'linear-gradient(135deg,#6366f1,#a855f7)' }}
+            className="w-16 h-16 rounded-2xl flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', boxShadow: '0 0 40px rgba(124,58,237,0.5)' }}
           >
             <Brain className="w-8 h-8 text-white" strokeWidth={1.5} />
           </motion.div>
         </div>
-
-        {/* Cycling message */}
         <div className="space-y-1">
           <AnimatePresence mode="wait">
             <motion.p key={message}
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}
-              className="text-slate-800 font-semibold text-lg">
+              className="font-semibold text-lg" style={{ color: '#f4f4f8' }}>
               {message}
             </motion.p>
           </AnimatePresence>
-          <p className="text-slate-400 text-sm">Může trvat cca 30 vteřin</p>
+          <p className="text-sm" style={{ color: '#62627a' }}>Může trvat cca 30 vteřin</p>
         </div>
-
-        {/* Animated progress bar */}
-        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(109,40,217,0.08)' }}>
+        <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
           <motion.div
             animate={{ x: ['-100%', '200%'] }}
             transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
@@ -249,17 +267,282 @@ function LoadingState({ message }: { message: string }) {
   )
 }
 
+function LoadingStateEnhanced({ messages, msgIdx }: { messages: string[]; msgIdx: number }) {
+  const [pct, setPct] = useState(0)
+  const [factIdx, setFactIdx] = useState(0)
+
+  useEffect(() => {
+    setPct(0)
+    const step = setInterval(() => {
+      setPct(p => {
+        const next = p + (p < 70 ? 1.8 : p < 90 ? 0.6 : 0.2)
+        return Math.min(next, 96)
+      })
+    }, 400)
+    return () => clearInterval(step)
+  }, [])
+
+  useEffect(() => {
+    const id = setInterval(() => setFactIdx(i => (i + 1) % STUDY_FACTS.length), 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <div className="rounded-3xl overflow-hidden"
+      style={{ background: 'rgba(17,17,24,0.98)', border: '1px solid rgba(124,58,237,0.30)', boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(124,58,237,0.08)' }}>
+
+      {/* Gradient progress bar at top */}
+      <div className="h-1 w-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <motion.div
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+          className="h-full rounded-full"
+          style={{ background: 'linear-gradient(90deg,#7c3aed,#a855f7,#c084fc)' }}
+        />
+      </div>
+
+      <div className="p-10 text-center space-y-7">
+
+        {/* Animated orb */}
+        <div className="flex justify-center">
+          <motion.div
+            animate={{ scale: [1, 1.12, 1], opacity: [0.85, 1, 0.85] }}
+            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+            className="w-24 h-24 rounded-full flex items-center justify-center"
+            style={{
+              background: 'radial-gradient(circle at 40% 40%, #a855f7, #7c3aed 60%, #4f46e5)',
+              boxShadow: '0 0 60px rgba(124,58,237,0.6), 0 0 120px rgba(168,85,247,0.2)',
+            }}
+          >
+            <Brain className="w-10 h-10 text-white" strokeWidth={1.5} />
+          </motion.div>
+        </div>
+
+        {/* Percentage */}
+        <div>
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={Math.floor(pct / 5)}
+              initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2 }}
+              className="text-5xl font-black tabular-nums"
+              style={{
+                background: 'linear-gradient(135deg,#a855f7,#c084fc)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+                fontFamily: 'var(--font-bricolage, Inter), sans-serif',
+              }}>
+              {Math.round(pct)}%
+            </motion.span>
+          </AnimatePresence>
+        </div>
+
+        {/* Cycling status message */}
+        <div className="space-y-1">
+          <AnimatePresence mode="wait">
+            <motion.p key={messages[msgIdx]}
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}
+              className="font-semibold text-lg" style={{ color: '#f4f4f8' }}>
+              {messages[msgIdx]}
+            </motion.p>
+          </AnimatePresence>
+          <p className="text-sm" style={{ color: '#62627a' }}>Může trvat cca 30 vteřin</p>
+        </div>
+
+        {/* Study fact */}
+        <div className="rounded-2xl px-5 py-4"
+          style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.18)' }}>
+          <AnimatePresence mode="wait">
+            <motion.p key={factIdx}
+              initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }} transition={{ duration: 0.4 }}
+              className="text-sm" style={{ color: '#a1a1b8' }}>
+              💡 <span style={{ color: '#c4b5fd' }}>Věděl/a jsi, že…</span> {STUDY_FACTS[factIdx]}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Topic-aware bento demo content ───────────────────────────────────────────
+
+type DemoSubject = 'history' | 'math' | 'physics' | 'biology' | 'chemistry' | 'literature' | 'geography' | 'civics' | 'general'
+
+interface BentoDemoContent {
+  podcastSnippet: string
+  quiz: { question: string; options: string[]; correctIndex: number; explanation: string }
+  flashcard: { front: string; back: string }
+  gamePairs: [string, string][]
+}
+
+const DEMO_SUBJECT_REGEXES: Array<[DemoSubject, RegExp]> = [
+  ['history',    /revoluc|válk|reich|nacis|komunis|imperiál|koloniál|feudál|středověk|renesanc|antik|dynasti|bitv|habsbur|napoleo|husit|světová válk|studená válk/i],
+  ['math',       /rovnic|trojúhelník|kružnic|obvod|obsah|objem|funkce|derivac|integrál|algebra|geometri|zlomek|procent|pravděpodobn|statistik|vektor|logaritm|kombinatorik|kvadratic|pythagoro/i],
+  ['physics',    /síla|energie.*fyz|rychlost|zrychlení|elektřina|magnetism|gravitac|vlnění|elektron|proud.*fyz|napětí|odpor.*fyz|hybnost|optik|spektr|radioaktiv|kvantov|newtonov|relativit|termodynamik/i],
+  ['biology',    /buňka|fotosyntéz|dna|rna|evoluc|ekologi|biotop|metabolism|enzym|hormon|organismus|rostlin|živočich|houba|bakterie|virus|imunit|genetik|dědičnost|chromozom|protein|mitóza|ekosystém/i],
+  ['chemistry',  /prvek|sloučenin|kyselina|zásada|oxidac|redukc|elektrolýz|polymer|periodická|molár|stechiometri|roztok|ionizace|uhlovodík/i],
+  ['literature', /báseň|román|povídka|spisovatel|literární|postava|lyrický|epický|dramatický|próza|poezie|drama|novela|epos|balada|sonet|mácha|neruda|čapek|shakespeare|kafka|hašek|literatura/i],
+  ['geography',  /zeměpis|kontinent|pohoří|moře|oceán|podnebí|reliéf|krajina|poloostrov|ostrov|klima|ekvátor|tropic|asie|evropa|afrika|austrálie|amérika/i],
+  ['civics',     /právo|zákon|ústava|parlament|vláda|prezident|volby|lidská práva|demokracie|soud|trestní/i],
+]
+
+function detectDemoSubject(topic: string): DemoSubject {
+  for (const [subject, re] of DEMO_SUBJECT_REGEXES) {
+    if (re.test(topic)) return subject
+  }
+  return 'general'
+}
+
+const FALLBACK_DEMO: BentoDemoContent = {
+  podcastSnippet: 'Hele, víš co je na fotosyntéze úplně fascinující? Hmm — počkej, tohle mě taky dostalo...',
+  quiz: {
+    question: 'Která z možností NENÍ výsledkem fotosyntézy?',
+    options: ['Kyslík (O₂)', 'Glukóza (C₆H₁₂O₆)', 'Oxid uhličitý (CO₂)', 'ATP energie'],
+    correctIndex: 2,
+    explanation: 'CO₂ je vstupní surovina fotosyntézy, ne produkt.',
+  },
+  flashcard: { front: 'Fotosyntéza', back: 'Přeměna světelné energie na chemickou (glukózu) pomocí chlorofylu' },
+  gamePairs: [['Chlorofyl', 'Zelené barvivo listu'], ['Stomata', 'Průduchy listu'], ['Glukóza', 'Cukr = energie']],
+}
+
+function buildTopicDemo(topic: string): BentoDemoContent {
+  if (!topic.trim()) return FALLBACK_DEMO
+  const tp = topic.trim()
+  const subject = detectDemoSubject(tp)
+
+  const DEMOS: Record<DemoSubject, BentoDemoContent> = {
+    history: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom to byl zlom, který změnil svět navždy…`,
+      quiz: {
+        question: `Která z možností NEJLÉPE vystihuje hlavní dopad „${tp}"?`,
+        options: ['Zásadní proměna politického a společenského řádu', 'Posílení stávající vládnoucí vrstvy', 'Izolovaná událost bez dlouhodobých důsledků', 'Čistě ekonomická záležitost bez politického dopadu'],
+        correctIndex: 0,
+        explanation: `„${tp}" patří k událostem, které hluboce proměnily společenské struktury a otevřely novou historickou epochu.`,
+      },
+      flashcard: { front: `Hlavní příčiny — ${tp}`, back: 'Souhrn politických, sociálních a ekonomických napětí, která vedla k dramatické historické změně.' },
+      gamePairs: [['Revoluce', 'Násilná nebo nenásilná změna společenského řádu'], ['Manifest', 'Politický program nebo prohlášení hnutí'], ['Třída', 'Socioekonomická skupina sdílející postavení ve společnosti']],
+    },
+    math: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom stačí jeden správný pohled a najednou to dává smysl…`,
+      quiz: {
+        question: `Co je klíčovým předpokladem správného řešení úlohy „${tp}"?`,
+        options: ['Správná identifikace dané informace a neznámé', 'Přibližný odhad bez výpočtu', 'Zapamatování vzorce bez porozumění', 'Náhodné dosazení čísel'],
+        correctIndex: 0,
+        explanation: `V úlohách na „${tp}" je vždy zásadní nejprve správně určit, co je dáno a co hledáme.`,
+      },
+      flashcard: { front: tp, back: 'Matematický pojem nebo postup — přesná definice a vzorec.' },
+      gamePairs: [['Vzorec', 'Symbolický zápis matematického vztahu'], ['Proměnná', 'Neznámá hodnota v rovnici'], ['Důkaz', 'Logická argumentace potvrzující platnost tvrzení']],
+    },
+    physics: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom je to ten typ fyziky, který vidíš každý den kolem sebe…`,
+      quiz: {
+        question: `Který zákon je základem pro pochopení „${tp}"?`,
+        options: ['Zákon zachování energie', 'Náhodná fluktuace bez zákonitostí', 'Biologický princip bez fyzikálního základu', 'Chemická reakce bez energetické bilance'],
+        correctIndex: 0,
+        explanation: `Fyzikální jevy jako „${tp}" se řídí fundamentálními zákony přírody — zejména zachováním energie.`,
+      },
+      flashcard: { front: tp, back: 'Fyzikální jev nebo zákon — přesná definice a klíčový vzorec.' },
+      gamePairs: [['Energie', 'Schopnost konat práci'], ['Síla', 'Interakce způsobující zrychlení tělesa'], ['Výkon', 'Vykonaná práce za jednotku času']],
+    },
+    biology: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom to je základ celého života, jak ho známe…`,
+      quiz: {
+        question: `Která z možností NEJLÉPE popisuje biologický význam „${tp}"?`,
+        options: ['Zásadní proces udržující život organismu', 'Vedlejší jev bez vlivu na organismus', 'Fyzikální zákon bez biologické relevance', 'Chemická reakce izolovaná od živých soustav'],
+        correctIndex: 0,
+        explanation: `„${tp}" hraje klíčovou roli v biologii — ovlivňuje životní funkce na buněčné nebo systémové úrovni.`,
+      },
+      flashcard: { front: tp, back: 'Biologický pojem nebo proces — přesná definice.' },
+      gamePairs: [['Buňka', 'Základní stavební a funkční jednotka života'], ['Metabolismus', 'Soubor chemických reakcí v organismu'], ['Enzym', 'Biologický katalyzátor urychlující reakce']],
+    },
+    chemistry: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom ta chemie dělá přesně tohle každou vteřinu kolem nás…`,
+      quiz: {
+        question: `Která z možností NEJLÉPE charakterizuje „${tp}"?`,
+        options: ['Přeměna látek vedoucí ke vzniku nových produktů', 'Fyzický jev bez chemické změny', 'Biologický proces bez molekulárního základu', 'Náhodná změna bez zákonitostí'],
+        correctIndex: 0,
+        explanation: `Chemické téma „${tp}" popisuje přeměnu nebo vlastnosti látek na atomární nebo molekulární úrovni.`,
+      },
+      flashcard: { front: tp, back: 'Chemický pojem, reakce nebo látka — přesná definice.' },
+      gamePairs: [['Prvek', 'Čistá látka složená z atomů jednoho druhu'], ['Molekula', 'Skupina atomů spojených chemickými vazbami'], ['Reakce', 'Přeměna látek za vzniku nových sloučenin']],
+    },
+    literature: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom ta díla dodnes rezonují, i když vznikla před staletími…`,
+      quiz: {
+        question: `Co je literárně NEJDŮLEŽITĚJŠÍM aspektem tématu „${tp}"?`,
+        options: ['Umělecká forma a sdělení díla v historickém kontextu', 'Počet stránek díla', 'Datum vzniku bez ohledu na obsah', 'Obchodní úspěch v době vydání'],
+        correctIndex: 0,
+        explanation: `Při studiu „${tp}" sledujeme především umělecké hodnoty, tematiku a historický kontext vzniku díla.`,
+      },
+      flashcard: { front: tp, back: 'Literární dílo, autor nebo směr — klíčové charakteristiky a historický kontext.' },
+      gamePairs: [['Lyrika', 'Básnický žánr vyjadřující subjektivní pocity'], ['Epika', 'Vypravěčský žánr s dějem a postavami'], ['Dramatika', 'Divadelní žánr určený k inscenování']],
+    },
+    geography: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom to místo nebo jev formuje životy milionů lidí každý den…`,
+      quiz: {
+        question: `Který faktor má NEJVĚTŠÍ vliv na charakter „${tp}"?`,
+        options: ['Přírodní podmínky a poloha ovlivňující klima a osídlení', 'Náhodné historické události bez geografické podmíněnosti', 'Výhradně ekonomické faktory bez vazby na přírodu', 'Kulturní vlivy bez ohledu na přírodní prostředí'],
+        correctIndex: 0,
+        explanation: `Geografie „${tp}" je podmíněna kombinací přírodních faktorů — polohou, reliéfem a klimatem.`,
+      },
+      flashcard: { front: tp, back: 'Geografický pojem, oblast nebo jev — klíčové charakteristiky polohy a přírodních podmínek.' },
+      gamePairs: [['Reliéf', 'Povrchové tvary zemského povrchu'], ['Klima', 'Dlouhodobé průměrné počasí v dané oblasti'], ['Migrace', 'Pohyb obyvatelstva z jednoho místa na druhé']],
+    },
+    civics: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Přitom to přímo ovlivňuje práva a povinnosti každého z nás…`,
+      quiz: {
+        question: `Proč je znalost tématu „${tp}" důležitá pro každého občana?`,
+        options: ['Umožňuje aktivní účast v demokratickém systému a ochranu práv', 'Je povinná pouze pro právníky a politiky', 'Nemá přímý dopad na každodenní život', 'Slouží pouze akademickým účelům'],
+        correctIndex: 0,
+        explanation: `„${tp}" je základem občanské gramotnosti — pomáhá pochopit práva, povinnosti a fungování státu.`,
+      },
+      flashcard: { front: tp, back: 'Právní nebo politický pojem — definice a praktický dopad na občanský život.' },
+      gamePairs: [['Demokracie', 'Vláda lidu prostřednictvím volených zástupců'], ['Ústava', 'Základní zákon státu definující práva a orgány'], ['Parlament', 'Zákonodárný sbor volený občany']],
+    },
+    general: {
+      podcastSnippet: `Hele, víš co je na „${tp}" úplně fascinující? Hmm — počkej, tohle mě taky dostalo…`,
+      quiz: {
+        question: `Která z možností NEJLÉPE vystihuje podstatu tématu „${tp}"?`,
+        options: ['Systematické porozumění klíčovým principům a souvislostem', 'Povrchní znalost bez hlubšího kontextu', 'Memorování faktů bez porozumění', 'Izolované informace bez vzájemné vazby'],
+        correctIndex: 0,
+        explanation: `Pochopení „${tp}" vyžaduje systematický přístup — znát klíčové pojmy, jejich vztahy a praktické dopady.`,
+      },
+      flashcard: { front: tp, back: 'Klíčový pojem z tohoto tématu — klikni zpět pro přesnou definici.' },
+      gamePairs: [['Kontext', 'Okolnosti a pozadí dané situace nebo jevu'], ['Analýza', 'Rozbor celku na části za účelem porozumění'], ['Syntéza', 'Propojení poznatků do uceleného celku']],
+    },
+  }
+  return DEMOS[subject]
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function StudentPage() {
   const { lang, t } = useLanguage()
   const st = t.student        // shorthand
+  const router = useRouter()
   const [inputMode, setInputMode] = useState<InputMode>('topic')
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null)
   const [uploadError,    setUploadError]    = useState<string | null>(null)
   const [isDragOver,     setIsDragOver]     = useState(false)
   const [showTextarea,   setShowTextarea]   = useState(false)
+  const [uploadMeta, setUploadMeta] = useState<{
+    files: Array<{ name: string; docType: string; pages?: number; chars: number }>
+    totalChars: number
+  } | null>(null)
   const uploadParsing = uploadProgress !== null
+  const [uploadPhaseIdx, setUploadPhaseIdx] = useState(0)
+
+  // Cycle through upload phase labels while a parse is in progress
+  useEffect(() => {
+    if (!uploadParsing) { setUploadPhaseIdx(0); return }
+    const id = setInterval(() => setUploadPhaseIdx(i => (i + 1) % UPLOAD_PHASES.length), 1800)
+    return () => clearInterval(id)
+  }, [uploadParsing])
+
   const [topic,     setTopic]     = useState('')
   const [rawNotes,  setRawNotes]  = useState('')
   const [level,     setLevel]     = useState<StudyLevel>('SŠ')
@@ -273,6 +556,8 @@ export default function StudentPage() {
   const [bentoFlipped, setBentoFlipped] = useState(false)
   const [bentoAudioPlaying, setBentoAudioPlaying] = useState(false)
 
+  const demoContent = useMemo(() => buildTopicDemo(topic), [topic])
+
   useEffect(() => {
     if (!loading) { setMsgIdx(0); return }
     const msgs = inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES
@@ -280,10 +565,14 @@ export default function StudentPage() {
     return () => clearInterval(id)
   }, [loading, inputMode])
 
-  // Clear results when switching input mode
+  // Clear results and all upload state when switching input mode
   useEffect(() => {
     setNotes(null)
     setError(null)
+    setUploadMeta(null)
+    setUploadError(null)
+    setShowTextarea(false)
+    setIsDragOver(false)
   }, [inputMode])
 
   // Auto-reset examGoal when level changes to prevent illogical combinations
@@ -313,13 +602,21 @@ export default function StudentPage() {
       if (!res.ok) {
         const d = await res.json()
         if (d.error === 'insufficient_credits') {
+          window.dispatchEvent(new CustomEvent('credits-updated'))
           window.dispatchEvent(new CustomEvent('upgrade-modal-open'))
           return
         }
         throw new Error(d.error)
       }
       window.dispatchEvent(new CustomEvent('credits-updated'))
-      setNotes(await res.json())
+      const result = await res.json() as import('@/types').SmartNotes
+      setNotes(result)
+      // Propagate detected topic so all topic-aware UI updates (bento demos, ExamCalendar, action bar)
+      const effectiveTopic = (isBYON && result.detected_topic) ? result.detected_topic : topic
+      if (isBYON && result.detected_topic) setTopic(result.detected_topic)
+      // Persist session + history for feature pages and Výpisky
+      saveSession({ notes: result, topic: effectiveTopic, level, examGoal, timestamp: Date.now() })
+      appendHistory({ topic: effectiveTopic, level, examGoal, timestamp: Date.now(), tools: detectTools(result) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Neočekávaná chyba')
     } finally {
@@ -348,7 +645,9 @@ export default function StudentPage() {
     setUploadProgress({ current: 0, total: files.length })
 
     const parts: string[] = []
+    const metaFiles: Array<{ name: string; docType: string; pages?: number; chars: number }> = []
     let failed = 0
+    let lastServerError: string | null = null
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
@@ -358,22 +657,36 @@ export default function StudentPage() {
         form.append('file', file)
         const res = await fetch('/api/parse-document', { method: 'POST', body: form })
         if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
+          const body = await res.json().catch(() => ({})) as { error?: string }
+          lastServerError = body.error ?? null
           console.warn(`[upload] ${file.name}:`, body.error)
           failed++; continue
         }
-        const { text } = await res.json() as { text: string }
-        parts.push(files.length > 1 ? `\n--- ${file.name} ---\n\n${text}` : text)
+        const parsed = await res.json() as {
+          text: string; chars: number; docType: string; pages?: number; filename?: string;
+          quality?: number; lang?: string | null; scanned?: boolean; method?: string
+        }
+        parts.push(files.length > 1 ? `\n--- ${file.name} ---\n\n${parsed.text}` : parsed.text)
+        metaFiles.push({ name: file.name, docType: parsed.docType, pages: parsed.pages, chars: parsed.chars })
+        if (parsed.scanned && parsed.method === 'ocr') {
+          console.info(`[upload] ${file.name}: scanned PDF, OCR extraction used (quality=${parsed.quality ?? '?'}%)`)
+        }
       } catch (err) {
-        console.warn(`[upload] ${file.name}:`, err); failed++
+        console.warn(`[upload] ${file.name}:`, err)
+        lastServerError = err instanceof Error ? err.message : st.upload.error
+        failed++
       }
     }
 
     if (parts.length > 0) {
       const merged = parts.join('\n\n').trim()
       setRawNotes(prev => (prev.trim() ? prev.trim() + '\n\n' + merged : merged))
+      setUploadMeta(prev => {
+        const all = [...(prev?.files ?? []), ...metaFiles]
+        return { files: all, totalChars: all.reduce((s, f) => s + f.chars, 0) }
+      })
     }
-    if (failed === files.length) setUploadError(st.upload.error)
+    if (failed === files.length) setUploadError(lastServerError ?? st.upload.error)
     else if (failed > 0) setUploadError(`${files.length - failed}/${files.length} souborů úspěšně načteno.`)
     setUploadProgress(null)
   }
@@ -405,7 +718,7 @@ export default function StudentPage() {
       className="-mt-10 -mb-10 relative"
       style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)', minHeight: '100vh' }}
     >
-      <div className="relative max-w-2xl mx-auto px-4 sm:px-6 py-12 space-y-7">
+      <div className="relative max-w-2xl mx-auto px-4 sm:px-6 py-12 pb-28 sm:pb-12 space-y-7">
 
         {/* ── Logo + tagline ── */}
         <div className="text-center space-y-2 pt-2">
@@ -425,7 +738,7 @@ export default function StudentPage() {
           <h1 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#f1f5f9' }}>
             Co se dnes chceš naučit?
           </h1>
-          <p className="text-sm" style={{ color: '#64748b' }}>
+          <p style={{ color: '#a0aec0', fontSize: '16px' }}>
             Zadej téma nebo nahraj zápisky — Teachio vygeneruje vše za tebe
           </p>
         </div>
@@ -495,16 +808,34 @@ export default function StudentPage() {
                           className="w-9 h-9 rounded-full border-2 mx-auto"
                           style={{ borderColor: 'rgba(167,139,250,0.3)', borderTopColor: '#a78bfa' }} />
                         <p className="text-sm font-semibold" style={{ color: '#a78bfa' }}>
-                          {uploadProgress.total > 1 ? `Načítám ${uploadProgress.current}/${uploadProgress.total} souborů…` : 'Čtu dokument…'}
+                          {uploadProgress.total > 1
+                            ? `${UPLOAD_PHASES[uploadPhaseIdx].replace('…', '')} ${uploadProgress.current}/${uploadProgress.total}…`
+                            : UPLOAD_PHASES[uploadPhaseIdx]}
                         </p>
+                        <p className="text-xs" style={{ color: '#475569' }}>PDF · DOCX · obrázek · TXT</p>
                       </div>
                     ) : rawNotes ? (
                       <div className="text-center space-y-1.5 pointer-events-none">
                         <div className="w-10 h-10 rounded-full flex items-center justify-center mx-auto" style={{ background: 'rgba(74,222,128,0.15)' }}>
                           <Check className="w-5 h-5" style={{ color: '#4ade80' }} strokeWidth={2.5} />
                         </div>
-                        <p className="text-sm font-bold" style={{ color: '#4ade80' }}>Obsah načten ✓</p>
-                        <p className="text-xs" style={{ color: '#64748b' }}>{rawNotes.length.toLocaleString('cs')} znaků · Přetáhni další pro přidání</p>
+                        <p className="text-sm font-bold" style={{ color: '#4ade80' }}>
+                          {uploadMeta
+                            ? uploadMeta.files.length === 1
+                              ? `${uploadMeta.files[0].docType === 'pdf'
+                                  ? `📄 ${uploadMeta.files[0].pages ? `${uploadMeta.files[0].pages}-stránkový PDF` : 'PDF'}`
+                                  : uploadMeta.files[0].docType === 'image'
+                                  ? '🖼️ Screenshot'
+                                  : `📝 ${uploadMeta.files[0].name.split('.').pop()?.toUpperCase()}`
+                                } načten ✓`
+                              : `${uploadMeta.files.length} soubory načteny ✓`
+                            : 'Obsah načten ✓'}
+                        </p>
+                        <p className="text-xs" style={{ color: '#64748b' }}>
+                          {uploadMeta
+                            ? `${(uploadMeta.totalChars).toLocaleString('cs')} znaků extrahováno · Klikni pro přidání dalšího`
+                            : `${rawNotes.length.toLocaleString('cs')} znaků · Přetáhni další pro přidání`}
+                        </p>
                       </div>
                     ) : (
                       <div className="text-center space-y-2 pointer-events-none">
@@ -514,13 +845,13 @@ export default function StudentPage() {
                           <UploadCloud className="w-6 h-6" style={{ color: '#a78bfa' }} strokeWidth={1.8} />
                         </motion.div>
                         <p className="text-sm font-bold" style={{ color: '#94a3b8' }}>
-                          {isDragOver ? '🎯 Pusť soubory!' : 'Přetáhni PDF, DOCX, nebo TXT'}
+                          {isDragOver ? '🎯 Pusť soubory!' : 'Přetáhni PDF, DOCX, obrázek nebo TXT'}
                         </p>
-                        <p className="text-xs" style={{ color: '#475569' }}>nebo klikni pro výběr · více souborů najednou</p>
+                        <p className="text-xs" style={{ color: '#475569' }}>nebo klikni pro výběr · více souborů najednou · screenshots podporovány</p>
                       </div>
                     )}
                     <input type="file" multiple
-                      accept=".pdf,.docx,.doc,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
                       className="sr-only" onChange={handleFileUpload} disabled={uploadParsing} />
                   </label>
 
@@ -532,7 +863,7 @@ export default function StudentPage() {
                           className="text-xs font-semibold transition-colors" style={{ color: '#7c3aed' }}>
                           {showTextarea ? '▲ Skrýt' : '✏️ Upravit text'}
                         </button>
-                        <button type="button" onClick={() => { setRawNotes(''); setShowTextarea(false) }}
+                        <button type="button" onClick={() => { setRawNotes(''); setShowTextarea(false); setUploadMeta(null) }}
                           className="flex items-center gap-1 text-xs font-semibold transition-colors" style={{ color: '#475569' }}>
                           <XIcon className="w-3 h-3" />Smazat
                         </button>
@@ -598,7 +929,7 @@ export default function StudentPage() {
                           background: examGoal === gv ? 'rgba(124,58,237,0.30)' : 'transparent',
                           color: examGoal === gv ? '#c4b5fd' : '#475569',
                         }}>
-                        {g.icon} {getGoalMeta(gv, level).label.split(' ').slice(-1)[0]}
+                        {g.icon} {getGoalMeta(gv, level).label}
                       </button>
                     )
                   })}
@@ -632,6 +963,23 @@ export default function StudentPage() {
                 </button>
               </div>
 
+              {/* ── Secondary actions ── */}
+              {!loading && (
+                <div className="flex items-center flex-wrap gap-2 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span className="text-xs font-semibold" style={{ color: '#334155' }}>nebo rovnou:</span>
+                  <button type="button" onClick={() => calendarRef.current?.openModal(topic || undefined)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: 'rgba(124,58,237,0.10)', border: '1px solid rgba(124,58,237,0.22)', color: '#a78bfa' }}>
+                    🗓️ Studijní plán
+                  </button>
+                  <button type="button" onClick={() => setBentoModal('podcast')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: 'rgba(219,39,119,0.08)', border: '1px solid rgba(219,39,119,0.18)', color: '#f472b6' }}>
+                    🎧 Audio Tutor
+                  </button>
+                </div>
+              )}
+
               {/* Error */}
               {error && (
                 <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
@@ -644,22 +992,6 @@ export default function StudentPage() {
           </div>
         </form>
 
-        {/* ── Functional quick actions (idle only) ── */}
-        {!notes && !loading && (
-          <div className="flex flex-wrap gap-2 justify-center">
-            <button type="button" onClick={() => calendarRef.current?.openModal()}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all hover:scale-105"
-              style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.28)', color: '#a78bfa' }}>
-              🗓️ Vytvořit studijní plán
-            </button>
-            <button type="button" onClick={() => setBentoModal('podcast')}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all hover:scale-105"
-              style={{ background: 'rgba(219,39,119,0.10)', border: '1px solid rgba(219,39,119,0.22)', color: '#f472b6' }}>
-              🎧 Audio Tutor
-            </button>
-          </div>
-        )}
-
         {/* ── Bento grid — shown only in idle state ── */}
         {!notes && !loading && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -668,60 +1000,92 @@ export default function StudentPage() {
             <ExamCalendar ref={calendarRef} />
 
             {/* Feature: Podcast */}
-            <button onClick={() => { setBentoModal('podcast'); setBentoAudioPlaying(false) }}
-              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(219,39,119,0.15)' }}>
-                <span className="text-xl">🎧</span>
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <button onClick={() => { setBentoModal('podcast'); setBentoAudioPlaying(false) }}
+                className="w-full p-5 space-y-3 text-left hover:bg-white/[0.02] active:bg-white/[0.01] transition-colors">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(219,39,119,0.15)' }}>
+                  <span className="text-xl">🎧</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Výukový podcast</p>
+                  <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Učitelka a student diskutují tvé téma jako virální radio show</p>
+                </div>
+              </button>
+              <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <button onClick={() => { setBentoModal('podcast'); setBentoAudioPlaying(false) }}
+                  className="flex-1 py-2 text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#db2777' }}>Demo →</button>
+                <Link href="/student/podcast"
+                  className="flex-1 py-2 text-xs font-semibold text-center transition-colors hover:opacity-80 border-l" style={{ color: '#f472b6', borderColor: 'rgba(255,255,255,0.06)' }}>
+                  Otevřít →
+                </Link>
               </div>
-              <div>
-                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Výukový podcast</p>
-                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Učitelka a student diskutují tvé téma jako virální radio show</p>
-              </div>
-              <span className="text-xs font-semibold" style={{ color: '#db2777' }}>2 hlasy · klikni pro demo →</span>
-            </button>
+            </div>
 
             {/* Feature: Quiz */}
-            <button onClick={() => setBentoModal('quiz')}
-              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.15)' }}>
-                <span className="text-xl">🧩</span>
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <button onClick={() => setBentoModal('quiz')}
+                className="w-full p-5 space-y-3 text-left hover:bg-white/[0.02] active:bg-white/[0.01] transition-colors">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.15)' }}>
+                  <span className="text-xl">🧩</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Interaktivní kvíz</p>
+                  <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>5 otázek s okamžitým vysvětlením — testuje porozumění, ne jen memorii</p>
+                </div>
+              </button>
+              <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <button onClick={() => setBentoModal('quiz')}
+                  className="flex-1 py-2 text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#6366f1' }}>Demo →</button>
+                <Link href="/student/quiz"
+                  className="flex-1 py-2 text-xs font-semibold text-center transition-colors hover:opacity-80 border-l" style={{ color: '#a78bfa', borderColor: 'rgba(255,255,255,0.06)' }}>
+                  Otevřít →
+                </Link>
               </div>
-              <div>
-                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Interaktivní kvíz</p>
-                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>5 otázek s okamžitým vysvětlením — testuje porozumění, ne jen memorii</p>
-              </div>
-              <span className="text-xs font-semibold" style={{ color: '#6366f1' }}>Ihned po generování · klikni pro demo →</span>
-            </button>
+            </div>
 
             {/* Feature: Flashcards */}
-            <button onClick={() => { setBentoModal('flashcards'); setBentoFlipped(false) }}
-              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(5,150,105,0.15)' }}>
-                <span className="text-xl">🃏</span>
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <button onClick={() => { setBentoModal('flashcards'); setBentoFlipped(false) }}
+                className="w-full p-5 space-y-3 text-left hover:bg-white/[0.02] active:bg-white/[0.01] transition-colors">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(5,150,105,0.15)' }}>
+                  <span className="text-xl">🃏</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Flashkarty</p>
+                  <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Sada pojmů s definicemi — otočitelné kartičky ve stylu Quizlet</p>
+                </div>
+              </button>
+              <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <button onClick={() => { setBentoModal('flashcards'); setBentoFlipped(false) }}
+                  className="flex-1 py-2 text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#059669' }}>Demo →</button>
+                <Link href="/student/flashcards"
+                  className="flex-1 py-2 text-xs font-semibold text-center transition-colors hover:opacity-80 border-l" style={{ color: '#34d399', borderColor: 'rgba(255,255,255,0.06)' }}>
+                  Otevřít →
+                </Link>
               </div>
-              <div>
-                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Flashkarty</p>
-                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Sada pojmů s definicemi — otočitelné kartičky ve stylu Quizlet</p>
-              </div>
-              <span className="text-xs font-semibold" style={{ color: '#059669' }}>3D flip · klikni pro demo →</span>
-            </button>
+            </div>
 
             {/* Feature: Game */}
-            <button onClick={() => setBentoModal('game')}
-              className="rounded-2xl p-5 space-y-3 text-left hover:scale-[1.02] active:scale-[0.99] transition-transform w-full"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(217,119,6,0.15)' }}>
-                <span className="text-xl">🕹️</span>
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <button onClick={() => setBentoModal('game')}
+                className="w-full p-5 space-y-3 text-left hover:bg-white/[0.02] active:bg-white/[0.01] transition-colors">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(217,119,6,0.15)' }}>
+                  <span className="text-xl">🕹️</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Minigra</p>
+                  <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Spáruj pojmy nebo seřaď — učení hrou, ne drillem</p>
+                </div>
+              </button>
+              <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <button onClick={() => setBentoModal('game')}
+                  className="flex-1 py-2 text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#d97706' }}>Demo →</button>
+                <Link href="/student/game"
+                  className="flex-1 py-2 text-xs font-semibold text-center transition-colors hover:opacity-80 border-l" style={{ color: '#fbbf24', borderColor: 'rgba(255,255,255,0.06)' }}>
+                  Otevřít →
+                </Link>
               </div>
-              <div>
-                <p className="text-sm font-bold" style={{ color: '#f1f5f9' }}>Minigra</p>
-                <p className="text-xs mt-0.5 leading-snug" style={{ color: '#475569' }}>Spáruj pojmy nebo seřaď — učení hrou, ne drillem</p>
-              </div>
-              <span className="text-xs font-semibold" style={{ color: '#d97706' }}>Matching + Sorting · klikni pro demo →</span>
-            </button>
+            </div>
           </div>
         )}
 
@@ -730,35 +1094,10 @@ export default function StudentPage() {
         {/* ── Loading ── */}
         {loading && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-8">
-            <div className="rounded-2xl p-10 text-center space-y-6"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(124,58,237,0.20)' }}>
-              <div className="flex justify-center">
-                <motion.div
-                  animate={{ scale: [1, 1.1, 1], opacity: [0.85, 1, 0.85] }}
-                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                  style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)', boxShadow: '0 0 40px rgba(124,58,237,0.4)' }}
-                >
-                  <Brain className="w-8 h-8 text-white" strokeWidth={1.5} />
-                </motion.div>
-              </div>
-              <div className="space-y-1">
-                <AnimatePresence mode="wait">
-                  <motion.p key={(inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES)[msgIdx]}
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}
-                    className="font-semibold text-lg" style={{ color: '#f1f5f9' }}>
-                    {(inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES)[msgIdx]}
-                  </motion.p>
-                </AnimatePresence>
-                <p className="text-sm" style={{ color: '#475569' }}>Může trvat cca 30 vteřin</p>
-              </div>
-              <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                <motion.div animate={{ x: ['-100%', '200%'] }} transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                  className="h-full w-1/3 rounded-full"
-                  style={{ background: 'linear-gradient(90deg,transparent,#7c3aed,#a855f7,transparent)' }} />
-              </div>
-            </div>
+            <LoadingStateEnhanced
+              messages={inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES}
+              msgIdx={msgIdx}
+            />
           </motion.div>
         )}
 
@@ -769,11 +1108,43 @@ export default function StudentPage() {
               transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
               className="space-y-4">
 
+              {/* Feature page shortcuts */}
+              <div className="flex flex-wrap gap-2">
+                {notes.interactive_quiz?.length > 0 && (
+                  <Link href="/student/quiz"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.22)', color: '#a78bfa' }}>
+                    🧩 Kvíz →
+                  </Link>
+                )}
+                {(notes.podcast_script?.length || notes.audio_script) && (
+                  <Link href="/student/podcast"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: 'rgba(219,39,119,0.08)', border: '1px solid rgba(219,39,119,0.18)', color: '#f472b6' }}>
+                    🎧 Podcast →
+                  </Link>
+                )}
+                {(notes.flashcards?.length ?? 0) > 0 && (
+                  <Link href="/student/flashcards"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: 'rgba(5,150,105,0.08)', border: '1px solid rgba(5,150,105,0.18)', color: '#34d399' }}>
+                    🃏 Flashkarty →
+                  </Link>
+                )}
+                {notes.interactive_game && (
+                  <Link href="/student/game"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.18)', color: '#fbbf24' }}>
+                    🕹️ Minigra →
+                  </Link>
+                )}
+              </div>
+
               {/* Action bar */}
               <div className="flex items-center justify-between flex-wrap gap-2 px-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-bold truncate max-w-[180px]" style={{ color: '#a78bfa' }}>
-                    {inputMode === 'notes' ? '📝 Zápisky' : topic}
+                    {topic || '📝 Zápisky'}
                   </span>
                   <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
                     style={{ background: 'rgba(124,58,237,0.15)', color: '#a78bfa' }}>{LEVEL_META[level].label}</span>
@@ -1049,7 +1420,7 @@ export default function StudentPage() {
                           ))}
                         </div>
                       </div>
-                      <p className="text-xs italic" style={{ color:'#64748b' }}>&ldquo;Hele, víš co je na fotosyntéze úplně fascinující? Hmm — počkej, tohle mě taky dostalo...&rdquo;</p>
+                      <p className="text-xs italic" style={{ color:'#64748b' }}>&ldquo;{demoContent.podcastSnippet}&rdquo;</p>
                       <button onClick={() => setBentoAudioPlaying(p=>!p)}
                         className="w-full py-3 rounded-2xl font-bold text-sm text-white"
                         style={{ background:'linear-gradient(135deg,#db2777,#f472b6)', boxShadow:'0 4px 16px rgba(219,39,119,0.40)' }}>
@@ -1060,19 +1431,19 @@ export default function StudentPage() {
 
                   {bentoModal==='quiz' && (
                     <div className="space-y-3">
-                      <p className="text-sm font-bold" style={{ color:'#e2e8f0' }}>Která z možností NENÍ výsledkem fotosyntézy?</p>
-                      {['Kyslík (O₂)','Glukóza (C₆H₁₂O₆)','Oxid uhličitý (CO₂)','ATP energie'].map((opt,i)=>(
+                      <p className="text-sm font-bold" style={{ color:'#e2e8f0' }}>{demoContent.quiz.question}</p>
+                      {demoContent.quiz.options.map((opt, i) => (
                         <div key={opt} className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
-                          style={{ background:i===2?'rgba(5,150,105,0.15)':'rgba(255,255,255,0.04)', border:i===2?'1px solid rgba(5,150,105,0.40)':'1px solid rgba(255,255,255,0.07)', color:i===2?'#34d399':'#94a3b8' }}>
+                          style={{ background:i===demoContent.quiz.correctIndex?'rgba(5,150,105,0.15)':'rgba(255,255,255,0.04)', border:i===demoContent.quiz.correctIndex?'1px solid rgba(5,150,105,0.40)':'1px solid rgba(255,255,255,0.07)', color:i===demoContent.quiz.correctIndex?'#34d399':'#94a3b8' }}>
                           <span className="w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center shrink-0"
-                            style={{ background:i===2?'rgba(5,150,105,0.25)':'rgba(255,255,255,0.06)', color:i===2?'#34d399':'#64748b' }}>
+                            style={{ background:i===demoContent.quiz.correctIndex?'rgba(5,150,105,0.25)':'rgba(255,255,255,0.06)', color:i===demoContent.quiz.correctIndex?'#34d399':'#64748b' }}>
                             {['A','B','C','D'][i]}
                           </span>
                           <span className="text-sm flex-1">{opt}</span>
-                          {i===2&&<span className="text-xs font-bold" style={{ color:'#34d399' }}>✓</span>}
+                          {i===demoContent.quiz.correctIndex&&<span className="text-xs font-bold" style={{ color:'#34d399' }}>✓</span>}
                         </div>
                       ))}
-                      <p className="text-xs px-1" style={{ color:'#64748b' }}>💡 CO₂ je vstupní surovina fotosyntézy, ne produkt.</p>
+                      <p className="text-xs px-1" style={{ color:'#64748b' }}>💡 {demoContent.quiz.explanation}</p>
                     </div>
                   )}
 
@@ -1085,7 +1456,7 @@ export default function StudentPage() {
                         <motion.p key={String(bentoFlipped)} initial={{ opacity:0, rotateY:90 }} animate={{ opacity:1, rotateY:0 }}
                           transition={{ duration:0.25 }} className="text-base font-bold text-center"
                           style={{ color:bentoFlipped?'#34d399':'#a78bfa' }}>
-                          {bentoFlipped?'Přeměna světelné energie na chemickou (glukózu) pomocí chlorofylu':'Fotosyntéza'}
+                          {bentoFlipped ? demoContent.flashcard.back : demoContent.flashcard.front}
                         </motion.p>
                       </button>
                       <p className="text-xs text-center" style={{ color:'#334155' }}>Pojem 1 z 10 · {bentoFlipped?'Definice — klikni zpět':'Klikni pro definici →'}</p>
@@ -1096,10 +1467,10 @@ export default function StudentPage() {
                     <div className="space-y-3">
                       <p className="text-xs" style={{ color:'#64748b' }}>Přiřaď pojmy k definicím:</p>
                       <div className="grid grid-cols-2 gap-2">
-                        {[['Chlorofyl','Zelené barvivo'],['Stomata','Průduchy listu'],['Glukóza','Cukr = energie']].map(([t,d])=>(
-                          <div key={t} className="contents">
-                            <div className="px-3 py-2 rounded-xl text-xs font-bold" style={{ background:'rgba(99,102,241,0.12)', border:'1px solid rgba(99,102,241,0.25)', color:'#a78bfa' }}>{t}</div>
-                            <div className="px-3 py-2 rounded-xl text-xs font-medium" style={{ background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', color:'#64748b' }}>{d}</div>
+                        {demoContent.gamePairs.map(([term, def]) => (
+                          <div key={term} className="contents">
+                            <div className="px-3 py-2 rounded-xl text-xs font-bold" style={{ background:'rgba(99,102,241,0.12)', border:'1px solid rgba(99,102,241,0.25)', color:'#a78bfa' }}>{term}</div>
+                            <div className="px-3 py-2 rounded-xl text-xs font-medium" style={{ background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', color:'#64748b' }}>{def}</div>
                           </div>
                         ))}
                       </div>
@@ -1114,6 +1485,8 @@ export default function StudentPage() {
       </AnimatePresence>
 
       </div>
+
+      <OnboardingTooltip />
     </div>
   )
 }
