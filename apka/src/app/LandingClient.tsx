@@ -2,12 +2,16 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 
 /* ── Nav ─────────────────────────────────────────────────────────────────────── */
 
 function Nav() {
-  const [scrolled, setScrolled] = useState(false)
-  const [mobileOpen, setMobileOpen] = useState(false)
+  const [scrolled,    setScrolled]    = useState(false)
+  const [mobileOpen,  setMobileOpen]  = useState(false)
+  const [mounted,     setMounted]     = useState(false)
+  const [userEmail,   setUserEmail]   = useState<string | null>(null)
+  const [avatarDD,    setAvatarDD]    = useState(false)
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
@@ -15,13 +19,26 @@ function Nav() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  useEffect(() => {
+    setMounted(true)
+    const sb = createClient()
+    sb.auth.getUser().then(({ data }) => {
+      setUserEmail(data.user?.email ?? null)
+    })
+  }, [])
+
+  const isAuthed = mounted && userEmail !== null
+  const initials = userEmail ? userEmail[0].toUpperCase() : ''
+
   return (
     <div className="fixed top-0 left-0 right-0 z-50">
-      {/* Announcement bar — part of the fixed block so it never gets covered */}
-      <div className="announcement-bar">
-        🎓 Teachio je zdarma pro studenty středních škol —{' '}
-        <Link href="/signup" className="font-bold underline underline-offset-2">Začni teď →</Link>
-      </div>
+      {/* Announcement bar */}
+      {!isAuthed && (
+        <div className="announcement-bar">
+          🎓 Teachio je zdarma pro studenty středních škol —{' '}
+          <Link href="/signup" className="font-bold underline underline-offset-2">Začni teď →</Link>
+        </div>
+      )}
     <nav
       className="transition-all duration-500"
       style={{
@@ -43,31 +60,86 @@ function Nav() {
 
         {/* Desktop nav links */}
         <div className="hidden md:flex items-center gap-6">
-          {[
-            { href: '#features', label: 'Funkce' },
-            { href: '#how', label: 'Jak to funguje' },
-            { href: '/pricing', label: 'Ceny' },
-          ].map(l => (
-            <a key={l.href} href={l.href}
-              className="text-sm font-medium transition-colors hover:text-white"
-              style={{ color: '#a1a1b8' }}>
-              {l.label}
-            </a>
-          ))}
+          {isAuthed ? (
+            <>
+              <Link href="/student" className="text-sm font-medium transition-colors hover:text-white" style={{ color:'#a1a1b8' }}>🏠 Domů</Link>
+              <Link href="/student/vypisky" className="text-sm font-medium transition-colors hover:text-white" style={{ color:'#a1a1b8' }}>Výpisky</Link>
+              <Link href="/pricing" className="text-sm font-medium transition-colors hover:text-white" style={{ color:'#a1a1b8' }}>Ceny</Link>
+            </>
+          ) : (
+            <>
+              {[
+                { href: '#features', label: 'Funkce' },
+                { href: '#how', label: 'Jak to funguje' },
+                { href: '/pricing', label: 'Ceny' },
+              ].map(l => (
+                <a key={l.href} href={l.href}
+                  className="text-sm font-medium transition-colors hover:text-white"
+                  style={{ color: '#a1a1b8' }}>
+                  {l.label}
+                </a>
+              ))}
+            </>
+          )}
         </div>
 
-        {/* CTA row */}
+        {/* CTA / auth row */}
         <div className="flex items-center gap-3">
-          <Link href="/login"
-            className="hidden sm:block text-sm font-semibold px-4 py-2 rounded-xl transition-all hover:opacity-80"
-            style={{ color: '#a1a1b8' }}>
-            Přihlásit se
-          </Link>
-          <Link href="/signup"
-            className="text-sm font-bold px-5 py-2.5 rounded-full text-white transition-all hover:scale-105"
-            style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', boxShadow: '0 4px 20px rgba(124,58,237,0.40)' }}>
-            Začít zdarma →
-          </Link>
+          {isAuthed ? (
+            <div className="relative">
+              <button onClick={()=>setAvatarDD(v=>!v)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all hover:opacity-80"
+                style={{ background:'rgba(124,58,237,0.15)', border:'1px solid rgba(124,58,237,0.25)' }}>
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black text-white"
+                  style={{ background:'linear-gradient(135deg,#7c3aed,#a855f7)' }}>
+                  {initials}
+                </div>
+                <span className="hidden sm:block text-xs font-semibold" style={{ color:'#a78bfa' }}>Můj účet</span>
+                <span className="text-[10px]" style={{ color:'#475569' }}>▾</span>
+              </button>
+              {avatarDD && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={()=>setAvatarDD(false)} />
+                  <div className="absolute right-0 top-full mt-2 z-50 rounded-2xl overflow-hidden min-w-[180px]"
+                    style={{ background:'rgba(10,10,20,0.98)', border:'1px solid rgba(124,58,237,0.25)', boxShadow:'0 16px 40px rgba(0,0,0,0.6)' }}>
+                    <p className="px-4 py-2.5 text-xs truncate" style={{ color:'#475569', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>{userEmail}</p>
+                    <Link href="/student" onClick={()=>setAvatarDD(false)}
+                      className="block px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5" style={{ color:'#e2e8f0' }}>
+                      🏠 Dashboard
+                    </Link>
+                    <Link href="/student/vypisky" onClick={()=>setAvatarDD(false)}
+                      className="block px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5" style={{ color:'#e2e8f0' }}>
+                      📚 Výpisky
+                    </Link>
+                    <Link href="/pricing" onClick={()=>setAvatarDD(false)}
+                      className="block px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5" style={{ color:'#e2e8f0' }}>
+                      ⚡ Upgrade
+                    </Link>
+                    <div style={{ borderTop:'1px solid rgba(255,255,255,0.06)' }}>
+                      <button
+                        onClick={async()=>{const sb=createClient();await sb.auth.signOut();setUserEmail(null);setAvatarDD(false)}}
+                        className="block w-full text-left px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5" style={{ color:'#64748b' }}>
+                        Odhlásit se
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <Link href="/login"
+                className="hidden sm:block text-sm font-semibold px-4 py-2 rounded-xl transition-all hover:opacity-80"
+                style={{ color: '#a1a1b8' }}>
+                Přihlásit se
+              </Link>
+              <Link href="/signup"
+                className="text-sm font-bold px-5 py-2.5 rounded-full text-white transition-all hover:scale-105"
+                style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', boxShadow: '0 4px 20px rgba(124,58,237,0.40)' }}>
+                Začít zdarma →
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </nav>

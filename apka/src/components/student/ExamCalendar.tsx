@@ -5,6 +5,7 @@ import {
   forwardRef, useImperativeHandle,
 } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -319,7 +320,7 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
   const [notifOn,    setNotifOn]    = useState(false)
   const [fileReady,       setFileReady]       = useState(false)
   const [isDragOverUpload,setIsDragOverUpload] = useState(false)
-  const [selectedFileNames,setSelectedFileNames] = useState<string[]>([])
+  const [selectedFiles,    setSelectedFiles]     = useState<File[]>([])
   const [langOpen,  setLangOpen]  = useState(false)
   const [srcOpen,   setSrcOpen]   = useState(false)
   const [actionModal,setActionModal]= useState<'audio'|'quiz'|'flashcards'|'matching'|null>(null)
@@ -386,7 +387,7 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
   function toggleMaterial(m:Material){
     setForm(f=>({...f,materials:f.materials.includes(m)?f.materials.filter(x=>x!==m):[...f.materials,m]}))
     setFileReady(false)
-    setSelectedFileNames([])
+    setSelectedFiles([])
   }
 
   function getAcceptAttr(materials: Material[]): string {
@@ -397,11 +398,17 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
     return types.join(',') || '*'
   }
 
+  function formatBytes(b: number) {
+    if (b < 1024) return `${b} B`
+    if (b < 1024 * 1024) return `${(b/1024).toFixed(0)} kB`
+    return `${(b/1024/1024).toFixed(1)} MB`
+  }
+
   function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
     if (files.length > 0) {
-      setSelectedFileNames(files.map(f => f.name))
+      setSelectedFiles(files)
       setFileReady(true)
     }
   }
@@ -411,7 +418,7 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
     setIsDragOverUpload(false)
     const files = Array.from(e.dataTransfer.files)
     if (files.length > 0) {
-      setSelectedFileNames(files.map(f => f.name))
+      setSelectedFiles(files)
       setFileReady(true)
     }
   }
@@ -455,10 +462,17 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                 {mastery}% hotovo
               </span>
             )}
+            {plan && (
+              <Link href={`/student/exam/${encodeURIComponent(plan.topic.toLowerCase().replace(/\s+/g,'-').slice(0,40))}`}
+                className="text-xs font-semibold px-3 py-1.5 rounded-xl transition-all hover:opacity-80"
+                style={{ background:'rgba(99,102,241,0.12)', color:'#818cf8', border:'1px solid rgba(99,102,241,0.20)' }}>
+                Otevřít →
+              </Link>
+            )}
             <button onClick={()=>{setStep(1);setDir(1);setModalOpen(true)}}
               className="text-xs font-semibold px-3 py-1.5 rounded-xl transition-all hover:opacity-80"
               style={{ background:'rgba(124,58,237,0.15)', color:'#a78bfa', border:'1px solid rgba(124,58,237,0.25)' }}>
-              {plan?'✏️ Upravit':'+ Vytvořit plán'}
+              {plan?'✏️':'+ Vytvořit plán'}
             </button>
           </div>
         </div>
@@ -900,8 +914,8 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                             </div>
                           </div>
 
-                          {/* Upload zone — mandatory when materials selected */}
-                  {form.materials.length > 0 && (
+                          {/* Upload zone — shown when materials selected AND not teachio-only */}
+                  {form.materials.length > 0 && form.sourceStrat !== 'teachio-only' && (
                     <div className="space-y-1.5">
                       <p className="text-xs font-bold uppercase tracking-widest flex items-center gap-1" style={{ color:'#64748b' }}>
                         Nahrát materiály<span style={{ color:'#f87171' }}>*</span>
@@ -918,15 +932,26 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                         onDrop={handleUploadDrop}
                       >
                         {fileReady ? (
-                          <>
-                            <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:'rgba(74,222,128,0.15)' }}>
-                              <span className="text-lg">✓</span>
+                          <div className="text-center space-y-1.5 pointer-events-none w-full px-3">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center mx-auto" style={{ background:'rgba(74,222,128,0.15)' }}>
+                              <span className="text-base">✓</span>
                             </div>
-                            <p className="text-xs font-bold" style={{ color:'#4ade80' }}>
-                              {selectedFileNames.length === 1 ? selectedFileNames[0] : `${selectedFileNames.length} soubory nahrány`}
-                            </p>
-                            <p className="text-xs" style={{ color:'#64748b' }}>Klikni pro změnu</p>
-                          </>
+                            {selectedFiles.slice(0, 3).map((f, i) => (
+                              <p key={i} className="text-xs font-medium truncate" style={{ color:'#4ade80' }}>
+                                {f.name} <span style={{ color:'#64748b' }}>({formatBytes(f.size)})</span>
+                              </p>
+                            ))}
+                            {selectedFiles.length > 3 && (
+                              <p className="text-xs" style={{ color:'#64748b' }}>+{selectedFiles.length - 3} dalších</p>
+                            )}
+                            <button
+                              type="button"
+                              className="pointer-events-auto text-xs px-2.5 py-1 rounded-lg transition-colors hover:opacity-80 mt-1"
+                              style={{ background:'rgba(239,68,68,0.12)', border:'1px solid rgba(239,68,68,0.25)', color:'#f87171' }}
+                              onClick={e => { e.preventDefault(); setSelectedFiles([]); setFileReady(false) }}>
+                              ✕ Odebrat
+                            </button>
+                          </div>
                         ) : (
                           <>
                             <span className="text-2xl">📎</span>
@@ -951,9 +976,9 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                       className="flex-1 py-3.5 rounded-2xl font-bold text-sm hover:opacity-70 transition-all"
                       style={{ background:'rgba(255,255,255,0.06)', color:'#64748b' }}>← Zpět</button>
                     <button onClick={generate}
-                      disabled={form.materials.length > 0 && !fileReady}
+                      disabled={form.materials.length > 0 && !fileReady && form.sourceStrat !== 'teachio-only'}
                       className="flex-1 py-3.5 rounded-2xl font-bold text-sm text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{ background:'linear-gradient(135deg,#6366f1,#7c3aed,#a855f7)', boxShadow:(form.materials.length===0||fileReady)?'0 8px 28px rgba(124,58,237,0.50)':'none' }}>
+                      style={{ background:'linear-gradient(135deg,#6366f1,#7c3aed,#a855f7)', boxShadow:(form.materials.length===0||fileReady||form.sourceStrat==='teachio-only')?'0 8px 28px rgba(124,58,237,0.50)':'none' }}>
                       ✨ Vygenerovat plán
                     </button>
                   </div>
