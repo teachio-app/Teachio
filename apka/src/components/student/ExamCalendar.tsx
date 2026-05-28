@@ -29,6 +29,14 @@ interface StudyDay {
   phaseName: string
   task:      string
   modules:   DayModules
+  // AI-enriched fields
+  title?:           string
+  estimatedMinutes?: number
+  todaysMood?:      string
+  specificSteps?:   string[]
+  interestingFact?: string
+  flashcardPrompt?: string[]
+  podcastHint?:     string
 }
 
 interface ExamPlan {
@@ -36,6 +44,7 @@ interface ExamPlan {
   schoolName: string; mastery: number; materials: Material[]; language: Language
   sourceStrat: SourceStrat; intensity: Intensity
   studyDays: StudyDay[]; completedDates: string[]; createdDate: string
+  aiMotivation?: string
 }
 
 export interface ExamCalendarHandle { openModal: () => void }
@@ -141,6 +150,11 @@ const PHASE_LABEL: Record<Phase, string> = {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+const AI_PHASE_MAP: Record<string, Phase> = {
+  'ÚVOD': 'intro', 'PROHLUBOVÁNÍ': 'deepen', 'PROCVIČENÍ': 'practice',
+  'OPAKOVÁNÍ': 'review', 'FINALE': 'final',
+}
 
 const STORAGE_KEY = 'teachio_exam_plan_v4'
 const DAY_CZ = ['Ne', 'Po', 'Út', 'St', 'Čt', 'Pá', 'So']
@@ -308,7 +322,7 @@ function Req({ children }: { children: React.ReactNode }) {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
+export const ExamCalendar = forwardRef<ExamCalendarHandle, { hideCard?: boolean }>(({ hideCard }, ref) => {
   const [plan,       setPlan]       = useState<ExamPlan|null>(null)
   const [modalOpen,  setModalOpen]  = useState(false)
   const [form,       setForm]       = useState(DEFAULT)
@@ -371,13 +385,65 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
 
   function go(n:number){ setDir(n>step?1:-1); setStep(n) }
 
-  function generate(){
+  async function generate(){
     go(4)
-    setTimeout(()=>{
-      const studyDays=generatePlan(form)
-      savePlan({...form,topic:form.topic.trim(),studyDays,completedDates:[],createdDate:todayISO})
-      setCalOffset(0); setActiveDay(null); setModalOpen(false); setStep(1)
-    },2200)
+    try {
+      const res = await fetch('/api/generate-study-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject:    form.topic.trim(),
+          examDate:   form.examDate,
+          schoolType: form.schoolLevel,
+          grade:      form.grade,
+          readiness:  form.mastery,
+          intensity:  form.intensity,
+          language:   form.language,
+        }),
+      })
+      const data = await res.json()
+
+      let studyDays: StudyDay[]
+
+      if (res.ok && data.days) {
+        studyDays = (data.days as Record<string, unknown>[]).map(d => {
+          const phaseKey = String(d.phase ?? '').toUpperCase()
+          const phase: Phase = AI_PHASE_MAP[phaseKey] ?? 'intro'
+          return {
+            date:             String(d.date),
+            phase,
+            phaseName:        PHASE_LABEL[phase],
+            task:             String(d.title ?? PHASE_LABEL[phase]),
+            modules: {
+              notes:      String(d.mainTask ?? ''),
+              trivia:     String(d.learningTip ?? ''),
+              hasPodcast: phase === 'intro' || phase === 'deepen' || phase === 'final',
+              gameType:   GAME_FOR[phase],
+            },
+            title:            String(d.title ?? ''),
+            estimatedMinutes: Number(d.estimatedMinutes ?? 45),
+            todaysMood:       String(d.todaysMood ?? ''),
+            specificSteps:    Array.isArray(d.specificSteps) ? d.specificSteps.map(String) : undefined,
+            interestingFact:  d.interestingFact ? String(d.interestingFact) : undefined,
+            flashcardPrompt:  Array.isArray(d.flashcardPrompt) ? d.flashcardPrompt.map(String) : undefined,
+            podcastHint:      d.podcastHint ? String(d.podcastHint) : undefined,
+          }
+        })
+        savePlan({
+          ...form, topic: form.topic.trim(), studyDays,
+          completedDates: [], createdDate: todayISO,
+          aiMotivation: data.motivation ?? undefined,
+        })
+      } else {
+        // Fallback to static plan if API fails
+        studyDays = generatePlan(form)
+        savePlan({ ...form, topic: form.topic.trim(), studyDays, completedDates: [], createdDate: todayISO })
+      }
+    } catch {
+      const studyDays = generatePlan(form)
+      savePlan({ ...form, topic: form.topic.trim(), studyDays, completedDates: [], createdDate: todayISO })
+    }
+    setCalOffset(0); setActiveDay(null); setModalOpen(false); setStep(1)
   }
 
   function toggleMaterial(m:Material){
@@ -410,7 +476,7 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
 
   return (
     <>
-      <div className="sm:col-span-2 rounded-2xl overflow-hidden"
+      {!hideCard && <div className="sm:col-span-2 rounded-2xl overflow-hidden"
         style={{ background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)' }}>
 
         {/* Header */}
@@ -533,22 +599,47 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                     {/* Bento grid */}
                     <div className="grid grid-cols-2 gap-2">
 
-                      {/* Card 1 — Výpisky (full width) */}
+                      {/* Card 1 — Hlavní úkol (full width) */}
                       <div className="col-span-2 rounded-xl p-4"
                         style={{ background:`${PHASE_COLOR[activeDayData.phase]}09`, border:`1px solid ${PHASE_COLOR[activeDayData.phase]}22` }}>
-                        <p className="text-xs font-bold mb-2" style={{ color:PHASE_COLOR[activeDayData.phase] }}>📋 Výpisky</p>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-bold" style={{ color:PHASE_COLOR[activeDayData.phase] }}>
+                            {activeDayData.todaysMood} {activeDayData.title || '📋 Výpisky'}
+                          </p>
+                          {activeDayData.estimatedMinutes && (
+                            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background:'rgba(255,255,255,0.06)', color:'#64748b' }}>
+                              ⏱ {activeDayData.estimatedMinutes} min
+                            </span>
+                          )}
+                        </div>
                         <p className="text-sm leading-relaxed"
                           style={{ color:plan.completedDates.includes(activeDayData.date)?'#334155':'#cbd5e1', textDecoration:plan.completedDates.includes(activeDayData.date)?'line-through':'none' }}>
                           {activeDayData.modules.notes}
                         </p>
                       </div>
 
+                      {/* Specific steps — today only */}
+                      {activeDayData.specificSteps && activeDayData.specificSteps.length > 0 && (
+                        <div className="col-span-2 rounded-xl p-4"
+                          style={{ background:'rgba(99,102,241,0.06)', border:'1px solid rgba(99,102,241,0.18)' }}>
+                          <p className="text-xs font-bold mb-2" style={{ color:'#818cf8' }}>🎯 Dnešní kroky</p>
+                          <ol className="space-y-1.5">
+                            {activeDayData.specificSteps.map((s, i) => (
+                              <li key={i} className="flex gap-2 text-xs" style={{ color:'#94a3b8' }}>
+                                <span className="font-bold shrink-0" style={{ color:'#6366f1' }}>{i + 1}.</span>
+                                <span>{s}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+
                       {/* Card 2 — Zajímavost */}
                       <div className="rounded-xl p-3.5"
                         style={{ background:'rgba(251,191,36,0.06)', border:'1px solid rgba(251,191,36,0.18)' }}>
                         <p className="text-xs font-bold mb-1.5" style={{ color:'#fbbf24' }}>💡 Zajímavost</p>
                         <p className="text-xs leading-relaxed" style={{ color:'#94a3b8' }}>
-                          {activeDayData.modules.trivia}
+                          {activeDayData.interestingFact || activeDayData.modules.trivia}
                         </p>
                       </div>
 
@@ -556,6 +647,9 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                       <div className="rounded-xl p-3.5 flex flex-col justify-between"
                         style={{ background:'rgba(219,39,119,0.07)', border:'1px solid rgba(219,39,119,0.18)' }}>
                         <p className="text-xs font-bold mb-2" style={{ color:'#f472b6' }}>🎧 Podcast</p>
+                        {activeDayData.podcastHint && (
+                          <p className="text-xs mb-2 leading-relaxed" style={{ color:'#94a3b8' }}>{activeDayData.podcastHint}</p>
+                        )}
                         {activeDayData.modules.hasPodcast ? (
                           <button onClick={() => { setAudioPlaying(false); setActionModal('audio') }}
                             className="w-full py-2 rounded-lg text-xs font-bold text-white transition-all hover:opacity-80"
@@ -566,6 +660,21 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                           <p className="text-xs" style={{ color:'#475569' }}>Dostupný v intro/deepen/final fázích</p>
                         )}
                       </div>
+
+                      {/* Flashcard prompts — today only */}
+                      {activeDayData.flashcardPrompt && activeDayData.flashcardPrompt.length > 0 && (
+                        <div className="col-span-2 rounded-xl p-3.5"
+                          style={{ background:'rgba(52,211,153,0.06)', border:'1px solid rgba(52,211,153,0.18)' }}>
+                          <p className="text-xs font-bold mb-2" style={{ color:'#34d399' }}>🃏 Dnešní flashkarty</p>
+                          <div className="space-y-1.5">
+                            {activeDayData.flashcardPrompt.map((q, i) => (
+                              <div key={i} className="text-xs px-3 py-2 rounded-lg" style={{ background:'rgba(52,211,153,0.06)', color:'#94a3b8', border:'1px solid rgba(52,211,153,0.12)' }}>
+                                {i + 1}. {q}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Card 4 — Trénink (full width) */}
                       <div className="col-span-2 rounded-xl p-3.5"
@@ -609,7 +718,7 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* ── Multi-step Modal ── */}
       <AnimatePresence>

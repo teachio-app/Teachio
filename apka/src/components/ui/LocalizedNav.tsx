@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
+import { useEffect, useState } from 'react'
 
 type Role = 'teacher' | 'student' | null
 interface Props { role: Role }
@@ -10,13 +11,29 @@ interface Props { role: Role }
 export function LocalizedNav({ role }: Props) {
   const { t } = useLanguage()
   const pathname = usePathname()
+  const [hasPlan, setHasPlan] = useState(false)
+
+  useEffect(() => {
+    if (role === 'student') {
+      try {
+        const raw = localStorage.getItem('teachio:plans:v1')
+        if (raw) {
+          const plans = JSON.parse(raw)
+          setHasPlan(Array.isArray(plans) && plans.length > 0)
+        }
+      } catch {}
+    }
+  }, [role])
 
   // Only the two most essential links — everything else lives in ProfileDropdown
+  const studentLinks = [
+    { href: '/',       label: t.nav.home  },
+    { href: '/student', label: t.nav.notes },
+    ...(hasPlan ? [{ href: '/studijni-plan', label: '📅 Můj plán' }] : []),
+  ]
+
   const links = role === 'student'
-    ? [
-        { href: '/',       label: t.nav.home  },
-        { href: '/student', label: t.nav.notes },
-      ]
+    ? studentLinks
     : [
         { href: '/',        label: t.nav.home                },
         { href: '/teacher', label: `✨ ${t.nav.generator}` },
@@ -66,14 +83,32 @@ export function LocalizedNav({ role }: Props) {
 export function LocalizedMobileNav({ role }: Props) {
   const { t } = useLanguage()
   const pathname = usePathname()
+  const [hasPlan, setHasPlan] = useState(false)
+
+  useEffect(() => {
+    if (role === 'student') {
+      try {
+        const raw = localStorage.getItem('teachio:plans:v1')
+        if (raw) {
+          const plans = JSON.parse(raw)
+          setHasPlan(Array.isArray(plans) && plans.length > 0)
+        }
+      } catch {}
+    }
+  }, [role])
+
+  const studentLinks = [
+    { href: '/student',        emoji: '✨', label: 'Výpisky'  },
+    { href: '/student/grader', emoji: '📝', label: 'Grader'   },
+    ...(hasPlan
+      ? [{ href: '/studijni-plan', emoji: '📅', label: 'Plán' }]
+      : [{ href: '/student/files', emoji: '📂', label: 'Soubory' }]
+    ),
+    { href: '/profil',         emoji: '🗂️', label: 'Historie' },
+  ]
 
   const links = role === 'student'
-    ? [
-        { href: '/student',        emoji: '✨', label: 'Výpisky'  },
-        { href: '/student/grader', emoji: '📝', label: 'Grader'   },
-        { href: '/student/files',  emoji: '📂', label: 'Soubory'  },
-        { href: '/profil',         emoji: '🗂️', label: 'Historie' },
-      ]
+    ? studentLinks
     : [
         { href: '/teacher', emoji: '✨', label: t.nav.generator },
         { href: '/profil',  emoji: '📂', label: t.nav.history   },

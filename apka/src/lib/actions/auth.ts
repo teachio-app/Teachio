@@ -56,6 +56,11 @@ export async function signup(formData: FormData) {
     redirect('/signup?error=' + encodeURIComponent('Registrace selhala: ' + error.message))
   }
 
+  // Supabase returns success with empty identities when email is already registered
+  if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
+    redirect('/signup?error=' + encodeURIComponent('Tento e-mail je již zaregistrován. Přihlaš se nebo použij jiný e-mail.'))
+  }
+
   // If Supabase returned a session immediately, email confirmation is disabled → go straight in
   if (data.session) {
     revalidatePath('/', 'layout')
@@ -63,7 +68,7 @@ export async function signup(formData: FormData) {
   }
 
   // Email confirmation required → tell user to check their inbox
-  redirect('/login?message=' + encodeURIComponent('Účet vytvořen! Zkontrolujte e-mail a klikněte na potvrzovací odkaz.'))
+  redirect('/login?message=' + encodeURIComponent('Účet vytvořen! Zkontroluj e-mail a klikni na potvrzovací odkaz.'))
 }
 
 export async function logout() {
