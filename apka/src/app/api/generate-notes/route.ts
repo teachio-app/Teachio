@@ -4,6 +4,7 @@ import type { SmartNotes, StudyModule, QuizQuestion, PodcastTurn, StudyLevel, Ex
 import { tryUseCredit, trackCreditUsed } from '@/lib/actions/credits'
 import { buildLangDirective } from '@/lib/i18n/langDirective'
 import { TEACHIO_IDENTITY } from '@/lib/teachioIdentity'
+import { fetchWikipediaSummary } from '@/lib/wikipedia'
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -39,17 +40,40 @@ ABSOLUTNÍ PRAVIDLA — PORUŠENÍ = ODMÍTNUTÍ VÝSTUPU:
    ZAKÁZÁNO: "Vytvoř myšlenkovou mapu", "Opakuj si pravidelně", obecné rady.
    POVINNÉ: konkrétní akronym NEBO absurdní příběh NEBO vizuální analogie specifická pro toto téma.
 
-⑥ INTERACTIVE QUIZ — 5 multiple-choice otázek
-   Každá otázka musí:
-   — question: testovat porozumění, nikoli memorování
-   — options: přesně 4 možnosti — jedna správná, tři přesvědčivě špatné (ne zjevné nesmysly)
+⑥ INTERACTIVE QUIZ — ZÁKON JEDNOZNAČNÉ SPRÁVNOSTI (ABSOLUTNÍ)
+
+   ZÁKLADNÍ PRAVIDLO: Každá otázka musí mít PRÁVĚ JEDNU NEZPOCHYBNITELNĚ SPRÁVNOU odpověď.
+   Pokud si student může říct "ale taky X by mohlo být správně", otázka je ŠPATNÁ — nepiš ji.
+
+   POVOLENÉ TYPY OTÁZEK (faktické, jednoznačné):
+   ✓ Datum/rok: "V kterém roce..." → jediná číselná odpověď
+   ✓ Jméno osoby/místa: "Kdo byl.../Kde se nacházelo..." → jediné správné jméno
+   ✓ Přesná definice: "Jak se PŘESNĚ nazývá [jev/proces/pojem]?" → terminologicky jednoznačné
+   ✓ Konkrétní příčina: "Co PŘÍMO spustilo/způsobilo X?" → konkrétní událost, ne výkladová
+   ✓ Negace: "Co z následujícího NENÍ [vlastností X]?" → logicky jednoznačné
+   ✓ Číselný fakt: kolik, kdy, jakou rychlostí/teplotou/počtem...
+
+   ZAKÁZANÉ TYPY OTÁZEK (víceznačné, NEPIŠ JE):
+   ✗ "Jaký byl HLAVNÍ PŘÍNOS/VÝZNAM...?" → přínosy jsou interpretační, více odpovědí může být správně
+   ✗ "Co NEJLÉPE CHARAKTERIZUJE...?" → vede k více správným odpovědím
+   ✗ "Proč je X DŮLEŽITÉ/ZÁSADNÍ/KLÍČOVÉ?" → hodnotové, ne faktické
+   ✗ "Jaký byl NEJVÝZNAMNĚJŠÍ [aspekt]?" → superlativy jsou sporné
+   ✗ "Jaký je hlavní produkt X?" pokud má X více produktů → upřesni: "hlavní ORGANICKÝ produkt" nebo "hlavní PLYNNÝ produkt" nebo "vedlejší produkt"
+   PŘÍKLAD OPRAVY: místo "Jaký je hlavní produkt fotosyntézy?" → "Jaký je hlavní ORGANICKÝ produkt fotosyntézy?" (odpověď: glukóza, jednoznačně)
+
+   DISTRAKTORY — PRAVIDLO VYVRATELNOSTI:
+   Každý distraktor musí být KONKRÉTNĚ VYVRATELNÝ specifickým faktem (datum, jméno, definice).
+   ZAKÁZÁNO: distraktory "trochu pravdivé" nebo kde "záleží na úhlu pohledu".
+   Dobrý příklad: k "Kdy padla Bastila?" → "1790", "1788", "1792" (konkrétně špatná data).
+   Špatný příklad: k "Proč padla Bastila?" → "kvůli hladu" / "kvůli tyranii" / "kvůli chudobě" (všechny trochu pravda).
+
+   — options: přesně 4 možnosti — jedna správná, tři konkrétně vyvratelné
    — correct_index: číslo 0–3 (index správné odpovědi)
    — explanation_why_correct: POVINNĚ použij PŘESNÝ TEXT z pole options.
-     Formát: "Správně je '[přesný text správné možnosti]', protože [důvod].
-     '[přesný text špatné možnosti 1]' je špatně, protože [důvod].
-     '[přesný text špatné možnosti 2]' je špatně, protože [důvod]."
+     Formát: "Správně je '[přesný text správné možnosti]', protože [konkrétní fakt].
+     '[přesný text špatné 1]' je špatně, protože [konkrétní vyvrácení].
+     '[přesný text špatné 2]' je špatně, protože [konkrétní vyvrácení]."
      NIKDY nepiš jiná slova než ta, která jsou v poli options.
-   Otázky musí pokrývat různé úrovně: fakta, porozumění, aplikace, analýza.
 
 ⑦ ABSOLUTNÍ ZÁKAZ VATY
    Zakázané fráze: "Toto je komplexní téma", "Existuje mnoho přístupů", "Je důležité pochopit".
@@ -89,7 +113,7 @@ REŽIM: STÁTNÍ ZKOUŠKY VŠ — Maximálně akademický tón. Deep modules mus
 
 // ── User prompt ───────────────────────────────────────────────────────────────
 
-function buildUserPrompt(topic: string, level: StudyLevel, examGoal: ExamGoal): string {
+function buildUserPrompt(topic: string, level: StudyLevel, examGoal: ExamGoal, wikiContext: string | null): string {
   const levelDirective: Record<StudyLevel, string> = {
     ZŠ: 'ÚROVEŇ ZŠ: Jednoduchý jazyk, konkrétní příklady z dětského světa. Kvíz: základní, max. 3 distraktory jsou zjevně špatně.',
     SŠ: 'ÚROVEŇ SŠ: Akademický jazyk, odborná terminologie. Kvíz: středně těžký, všechny 4 možnosti musí být věrohodné.',
@@ -97,9 +121,13 @@ function buildUserPrompt(topic: string, level: StudyLevel, examGoal: ExamGoal): 
   }
   const examDirective = buildExamGoalDirective(examGoal)
 
+  const wikiSection = wikiContext
+    ? `\nOVĚŘENÁ ENCYKLOPEDICKÁ REFERENCE — čerpej z ní pro přesné datace, jména a definice, zejména v kvízu:\n"""\n${wikiContext}\n"""\n`
+    : ''
+
   return `Téma: "${topic}"
 ${levelDirective[level]}
-${examDirective}
+${examDirective}${wikiSection}
 
 Vrať VÝHRADNĚ tento JSON (bez jakéhokoli dalšího textu):
 {
@@ -189,13 +217,14 @@ Vrať VÝHRADNĚ tento JSON (bez jakéhokoli dalšího textu):
     "title": "Seřaď správně",
     "instructions": "Přetáhni do správného pořadí",
     "items": [
-      {"id": 1, "text": "[První krok/koncept tématu ${topic}]"},
-      {"id": 2, "text": "[Druhý krok/koncept]"},
-      {"id": 3, "text": "[Třetí krok/koncept]"},
-      {"id": 4, "text": "[Čtvrtý krok/koncept]"},
-      {"id": 5, "text": "[Pátý krok/koncept]"}
+      {"id": 1, "text": "[SKUTEČNÝ krok/fáze PŘÍMO z procesu ${topic} — NE příbuzný jev]"},
+      {"id": 2, "text": "[SKUTEČNÝ krok/fáze — musí být součástí ${topic}, ne analogie]"},
+      {"id": 3, "text": "[SKUTEČNÝ krok/fáze]"},
+      {"id": 4, "text": "[SKUTEČNÝ krok/fáze]"},
+      {"id": 5, "text": "[SKUTEČNÝ krok/fáze]"}
     ]
-  }`
+  }
+  ABSOLUTNÍ ZÁKON PRO SORTING: Každá položka musí být PŘÍMO součástí procesu/děje '${topic}'. ZAKÁZÁNO přidávat příbuzné jevy, vedlejší procesy nebo opačné procesy (např. pro fotosyntézu ZAKÁZÁNO: 'Buněčné dýchání', pro mitózu ZAKÁZÁNO: 'Meióza').`
     : `{
     "game_type": "matching",
     "title": "Spáruj pojmy",
@@ -241,6 +270,16 @@ function validate(parsed: unknown): SmartNotes {
          !q.explanation_why_correct?.trim()
   )
   if (badQ) throw new Error(`Malformed quiz question: "${badQ?.question?.slice(0, 40)}"`)
+  const dupQ = (r.interactive_quiz as QuizQuestion[]).find(q => {
+    const seen = new Set<string>()
+    return q.options.some(o => {
+      const key = o.trim().toLowerCase()
+      if (seen.has(key)) return true
+      seen.add(key)
+      return false
+    })
+  })
+  if (dupQ) throw new Error(`Quiz question has duplicate options: "${dupQ.question.slice(0, 40)}"`)
 
   if (r?.podcast_script !== undefined) {
     if (!Array.isArray(r.podcast_script) || r.podcast_script.length < 4)
@@ -272,6 +311,9 @@ export async function POST(req: NextRequest) {
   const safeGoal: ExamGoal = VALID_GOALS.includes(examGoal) ? examGoal : 'bezna-pisemka'
   const isDeepMode = safeGoal === 'statni-zaverecne'
 
+  // Fetch Wikipedia enrichment in parallel with auth — graceful fallback on failure
+  const wikiPromise = fetchWikipediaSummary(topic.trim())
+
   // ── Credit guard ────────────────────────────────────────────────────────────
   let authedUserId: string | null = null
   try {
@@ -294,14 +336,16 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const wikiContext = await wikiPromise
+
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT + TEACHIO_IDENTITY + buildLangDirective(targetLanguage) },
-      { role: 'user',   content: buildUserPrompt(topic.trim(), level, safeGoal) },
+      { role: 'user',   content: buildUserPrompt(topic.trim(), level, safeGoal, wikiContext) },
     ],
     response_format: { type: 'json_object' },
-    temperature: 0.65,
+    temperature: 0.45,
     // Deep mode (VŠ state exams) needs more tokens for richer explanations
     max_tokens: isDeepMode ? 7200 : 6200, // flashcards + game + mind map
   })

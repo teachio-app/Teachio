@@ -4,6 +4,7 @@ import type { SmartNotes, StudyModule, QuizQuestion, PodcastTurn, StudyLevel, Ex
 import { tryUseCredit, trackCreditUsed } from '@/lib/actions/credits'
 import { buildLangDirective } from '@/lib/i18n/langDirective'
 import { TEACHIO_IDENTITY } from '@/lib/teachioIdentity'
+import { fetchWikipediaSummary } from '@/lib/wikipedia'
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -52,14 +53,36 @@ FILOZOFIE: "DŮVĚŘUJ TÉMATU — OVĚŘUJ FAKTA"
    ZAKÁZÁNO rozšiřovat obsah o nesouvisející historický kontext.
    Zápisky = mapa rozsahu. Tvé odborné znalosti = ověření kvality faktů uvnitř mapy.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ZÁKON — KVÍZ (testuje opravený/ověřený obsah)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Otázky testují témata ze zápisků — ale s OPRAVENÝMI fakty.
-Pokud zápisky měly chybu, kvíz testuje správnou verzi (ne chybnou).
-Distraktory = věrohodné záměny vyvratelné správnými fakty.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ZÁKON KVÍZU — JEDNOZNAČNÁ SPRÁVNOST (ABSOLUTNÍ, BEZ VÝJIMEK)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Otázky testují zápisky — ale s OPRAVENÝMI fakty.
+ZÁKLADNÍ PRAVIDLO: Každá otázka musí mít PRÁVĚ JEDNU NEZPOCHYBNITELNĚ SPRÁVNOU odpověď.
+Pokud si student může říct "ale taky X by mohlo být správně", otázka je ŠPATNÁ — nepiš ji.
+
+POVOLENÉ TYPY OTÁZEK (faktické, jednoznačné):
+✓ Datum/rok: "V kterém roce..." → jediná číselná odpověď
+✓ Jméno osoby/místa: "Kdo byl.../Kde se nacházelo..." → jediné správné jméno
+✓ Přesná definice: "Jak se PŘESNĚ nazývá [jev/pojem]?" → terminologicky jednoznačné
+✓ Konkrétní příčina: "Co PŘÍMO spustilo/způsobilo X?" → konkrétní událost, ne výkladová
+✓ Negace: "Co z následujícího NENÍ [vlastností X]?" → logicky jednoznačné
+✓ Číselný fakt: kolik, kdy, jaký počet/teplotu/délku...
+
+ZAKÁZANÉ TYPY OTÁZEK (víceznačné, NEPIŠ JE):
+✗ "Jaký byl HLAVNÍ PŘÍNOS/VÝZNAM...?" → přínosy jsou interpretační, více odpovědí je správně
+✗ "Co NEJLÉPE CHARAKTERIZUJE...?" → vede k více správným odpovědím
+✗ "Proč je X DŮLEŽITÉ/ZÁSADNÍ/KLÍČOVÉ?" → hodnotové, ne faktické
+✗ "Jaký byl NEJVÝZNAMNĚJŠÍ [aspekt]?" → superlativy jsou sporné
+✗ "Jaký je hlavní produkt X?" pokud má X více produktů → upřesni na "hlavní ORGANICKÝ produkt" nebo "hlavní PLYNNÝ produkt"
+
+DISTRAKTORY — PRAVIDLO VYVRATELNOSTI:
+Každý distraktor musí být KONKRÉTNĚ VYVRATELNÝ specifickým faktem ze zápisků nebo opravou.
+ZAKÁZÁNO: distraktory "trochu pravdivé" nebo kde "záleží na úhlu pohledu".
+Dobrý příklad: k "Kdy padla Bastila?" → "1790", "1788", "1792" (konkrétně špatná data).
+Špatný příklad: k "Proč padla Bastila?" → "kvůli hladu" / "kvůli tyranii" (oboje trochu pravda).
+
 explanation_why_correct MUSÍ používat PŘESNÝ TEXT z pole options — žádná jiná slova.
-Formát: "Správně je '[přesný text správné možnosti]', protože [důvod]. '[přesný text špatné]' je špatně, protože [důvod]."
+Formát: "Správně je '[přesný text správné možnosti]', protože [konkrétní fakt]. '[přesný text špatné]' je špatně, protože [konkrétní vyvrácení]."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ZÁKON — PODCAST SKRIPT (virální radio show)
@@ -89,6 +112,29 @@ Memory hack: akronym nebo příběh z klíčových pojmů zápisků. ZAKÁZÁNO:
 Zákaz vaty: žádná věta bez konkrétní informace.
 Výstup: POUZE validní JSON, žádný text před/za ním.`
 
+// ── Topic hint extraction (for Wikipedia lookup, no LLM needed) ──────────────
+// Tries to detect the subject from the first 600 chars of notes using structural cues.
+function extractTopicHint(notes: string): string | null {
+  const head = notes.slice(0, 600)
+
+  const headingMatch = head.match(/^#{1,3}\s+(.+)$/m)
+  if (headingMatch?.[1]) return headingMatch[1].trim().slice(0, 80)
+
+  // All-caps line (common Czech student note style)
+  const capsMatch = head.match(/^([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ ]{4,60})$/m)
+  if (capsMatch?.[1]) return capsMatch[1].trim()
+
+  // Bold text **Topic**
+  const boldMatch = head.match(/\*\*(.{5,60}?)\*\*/)
+  if (boldMatch?.[1]) return boldMatch[1].trim()
+
+  // First non-empty line if it looks like a title (short, no full stop)
+  const firstLine = head.split('\n').find(l => l.trim().length >= 5)?.trim()
+  if (firstLine && firstLine.length <= 80 && !firstLine.endsWith('.')) return firstLine
+
+  return null
+}
+
 // ── Exam-goal directive (same as generate-notes) ──────────────────────────────
 
 function buildExamGoalDirective(examGoal: ExamGoal): string {
@@ -102,7 +148,7 @@ function buildExamGoalDirective(examGoal: ExamGoal): string {
 
 // ── User prompt ───────────────────────────────────────────────────────────────
 
-function buildUserPrompt(userNotes: string, level: StudyLevel, examGoal: ExamGoal): string {
+function buildUserPrompt(userNotes: string, level: StudyLevel, examGoal: ExamGoal, wikiContext: string | null): string {
   const levelHint: Record<StudyLevel, string> = {
     ZŠ: 'Úroveň: ZŠ — jednoduchý jazyk, základní kvíz.',
     SŠ: 'Úroveň: SŠ — akademický jazyk, středně těžký kvíz.',
@@ -114,7 +160,11 @@ function buildUserPrompt(userNotes: string, level: StudyLevel, examGoal: ExamGoa
     ? userNotes.slice(0, MAX_NOTES_CHARS) + '\n[... zápisky zkráceny ...]'
     : userNotes
 
-  return `${levelHint[level]}${buildExamGoalDirective(examGoal)}
+  const wikiSection = wikiContext
+    ? `\nOVĚŘENÁ REFERENCE pro ověření faktů (zápisky jsou HLAVNÍ ZDROJ, toto slouží jen k verifikaci dat, jmen a definic, zejména v kvízu):\n"""\n${wikiContext}\n"""\n`
+    : ''
+
+  return `${levelHint[level]}${buildExamGoalDirective(examGoal)}${wikiSection}
 
 Zápisky studenta (zpracuj VÝHRADNĚ tento obsah — nepřidávej nic navíc):
 """
@@ -123,6 +173,7 @@ ${truncated}
 
 Na základě těchto zápisků vrať VÝHRADNĚ tento JSON:
 {
+  "detected_topic": "Krátký, výstižný název hlavního tématu zápisků (2–8 slov, např. 'Velká francouzská revoluce' nebo 'Fotosyntéza a přeměna světla'). NEPSAT 'Zápisky o...' — jen samotný název tématu.",
   "introduction": "2–3 věty. Motivační úvod shrnující, o čem zápisky jsou — z pohledu studenta připravujícího se na zkoušku.",
   "tl_dr": "2 věty. Absolutní esence zápisků — nejdůležitější myšlenka nebo závěr, který ze zápisků plyne.",
   "deep_modules": [
@@ -228,6 +279,16 @@ function validate(parsed: unknown): SmartNotes {
          !q.explanation_why_correct?.trim()
   )
   if (badQ) throw new Error(`Malformed quiz question: "${badQ?.question?.slice(0, 40)}"`)
+  const dupQ = (r.interactive_quiz as QuizQuestion[]).find(q => {
+    const seen = new Set<string>()
+    return q.options.some(o => {
+      const key = o.trim().toLowerCase()
+      if (seen.has(key)) return true
+      seen.add(key)
+      return false
+    })
+  })
+  if (dupQ) throw new Error(`Quiz question has duplicate options: "${dupQ.question.slice(0, 40)}"`)
 
   // podcast_script is optional but if present must be valid
   if (r?.podcast_script !== undefined) {
@@ -265,6 +326,10 @@ export async function POST(req: NextRequest) {
   }
   const safeGoal: ExamGoal = VALID_GOALS.includes(examGoal) ? examGoal : 'bezna-pisemka'
 
+  // Fetch Wikipedia enrichment in parallel with auth — graceful fallback on failure
+  const topicHint = extractTopicHint(userNotes.trim())
+  const wikiPromise = topicHint ? fetchWikipediaSummary(topicHint) : Promise.resolve(null)
+
   // ── Credit guard ────────────────────────────────────────────────────────────
   let authedUserId: string | null = null
   try {
@@ -287,14 +352,16 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const wikiContext = await wikiPromise
+
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT + TEACHIO_IDENTITY + buildLangDirective(targetLanguage) },
-      { role: 'user',   content: buildUserPrompt(userNotes.trim(), level, safeGoal) },
+      { role: 'user',   content: buildUserPrompt(userNotes.trim(), level, safeGoal, wikiContext) },
     ],
     response_format: { type: 'json_object' },
-    temperature: 0.5, // lower = more faithful to the input, less creative
+    temperature: 0.4, // lower = more faithful to source and more factual quiz questions
     max_tokens: 7800, // podcast + flashcards + game + mind map
   })
 

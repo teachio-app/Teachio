@@ -79,7 +79,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       )}
 
       {/* ── Header ── */}
-      <header className={isDark ? (isTeacher ? 'dark-header-blue sticky top-0 z-20' : 'dark-header sticky top-0 z-20') : 'glass-header sticky top-0 z-20'}>
+      <header className={isDark ? (isTeacher ? 'dark-header-blue sticky top-0 z-40' : 'dark-header sticky top-0 z-40') : 'glass-header sticky top-0 z-40'}>
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
 
           {/* Logo + role badge */}

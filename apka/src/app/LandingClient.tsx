@@ -16,12 +16,18 @@ function Nav() {
   }, [])
 
   return (
+    <div className="fixed top-0 left-0 right-0 z-50">
+      {/* Announcement bar — part of the fixed block so it never gets covered */}
+      <div className="announcement-bar">
+        🎓 Teachio je zdarma pro studenty středních škol —{' '}
+        <Link href="/signup" className="font-bold underline underline-offset-2">Začni teď →</Link>
+      </div>
     <nav
-      className="fixed top-0 left-0 right-0 z-50 transition-all duration-500"
+      className="transition-all duration-500"
       style={{
-        background: scrolled ? 'rgba(10,10,15,0.90)' : 'transparent',
-        backdropFilter: scrolled ? 'blur(20px)' : 'none',
-        WebkitBackdropFilter: scrolled ? 'blur(20px)' : 'none',
+        background: scrolled ? 'rgba(10,10,15,0.95)' : 'rgba(10,10,15,0.85)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
         borderBottom: scrolled ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent',
       }}
     >
@@ -65,6 +71,7 @@ function Nav() {
         </div>
       </div>
     </nav>
+    </div>
   )
 }
 
@@ -72,7 +79,7 @@ function Nav() {
 
 function Hero() {
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center px-6 pt-24 pb-20 text-center overflow-hidden">
+    <section className="relative min-h-screen flex flex-col items-center justify-center px-6 pt-36 pb-20 text-center overflow-hidden">
 
       {/* Ambient glow orbs */}
       <div className="absolute inset-0 pointer-events-none" aria-hidden>
@@ -407,7 +414,7 @@ function ComparisonTable() {
 function Testimonials() {
   const items = [
     { stars: 5, text: 'Nevěřila jsem, že AI může udělat podcast přesně o tom, co studuju. Na Teachiu mi to trvalo 25 vteřin a bylo to lepší než moje zápisky.', name: 'Tereza M.', school: 'MUNI Brno, 2. ročník' },
-    { stars: 5, text: 'Zkoušel jsem všechno — ChatGPT, Notion AI... Tohle je první věc, která mi fakt pomohla se naučit na státnice. Ten studijní plán mě doslova zachránil.', name: 'Jakub H.', school: 'VUT Brno, Ing.' },
+    { stars: 5, text: 'Zkoušel jsem všechno — ChatGPT, Notion AI... Tohle je první věc, která mi fakt pomohla se naučit na státnice. Ten studijní plán mě doslova zachránil.', name: 'Jakub H.', school: 'VUT Brno, 2. ročník Ing.' },
     { stars: 5, text: 'Flashkarty se samy generují z látky a pak tě zkoušejí. Na maturity jsem se naučila 200 pojmů za týden, dřív by to trvalo měsíc.', name: 'Anička K.', school: 'Gymnázium Praha, maturantka' },
     { stars: 5, text: 'Paráda! Kvíz mi ukázal přesně kde mám díry ve znalosti, ne jen co umím. Přesně to jsem potřeboval před přijímačkami.', name: 'Marek S.', school: 'SŠ Olomouc, 4. ročník' },
   ]
@@ -562,7 +569,7 @@ function Footer() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-8"
           style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          <p className="text-sm" style={{ color: '#62627a' }}>© 2025 Teachio · Všechna práva vyhrazena</p>
+          <p className="text-sm" style={{ color: '#62627a' }}>© {new Date().getFullYear()} Teachio · Všechna práva vyhrazena</p>
           <div className="flex items-center gap-4">
             {['Instagram', 'TikTok', 'LinkedIn'].map(s => (
               <a key={s} href="#" className="text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#62627a' }}>{s}</a>
@@ -579,12 +586,6 @@ function Footer() {
 export default function LandingClient() {
   return (
     <div style={{ background: '#0a0a0f', color: '#f4f4f8', minHeight: '100vh' }}>
-      {/* Announcement bar */}
-      <div className="announcement-bar">
-        🎓 Teachio je zdarma pro studenty středních škol —{' '}
-        <Link href="/signup" className="font-bold underline underline-offset-2">Začni teď →</Link>
-      </div>
-
       <Nav />
       <Hero />
       <SocialProofStrip />
