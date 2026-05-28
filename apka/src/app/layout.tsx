@@ -14,7 +14,6 @@ const bricolage = Bricolage_Grotesque({
   variable: '--font-bricolage',
   display: 'swap',
   weight: ['400', '600', '700', '800'],
-  axes: ['opsz'],
 })
 
 export const metadata: Metadata = {
