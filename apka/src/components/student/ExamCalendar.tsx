@@ -38,7 +38,7 @@ interface ExamPlan {
   studyDays: StudyDay[]; completedDates: string[]; createdDate: string
 }
 
-export interface ExamCalendarHandle { openModal: () => void }
+export interface ExamCalendarHandle { openModal: (defaultTopic?: string) => void }
 
 // ── School database (15+ per level) ───────────────────────────────────────────
 
@@ -317,14 +317,17 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
   const [calOffset,  setCalOffset]  = useState(0)
   const [activeDay,  setActiveDay]  = useState<string|null>(null)
   const [notifOn,    setNotifOn]    = useState(false)
-  const [fileReady,  setFileReady]  = useState(false)
-  const [uploading,  setUploading]  = useState(false)
+  const [fileReady,       setFileReady]       = useState(false)
+  const [isDragOverUpload,setIsDragOverUpload] = useState(false)
+  const [selectedFileNames,setSelectedFileNames] = useState<string[]>([])
+  const [langOpen,  setLangOpen]  = useState(false)
+  const [srcOpen,   setSrcOpen]   = useState(false)
   const [actionModal,setActionModal]= useState<'audio'|'quiz'|'flashcards'|'matching'|null>(null)
   const [audioPlaying,setAudioPlaying]= useState(false)
   const [fcIdx,  setFcIdx]  = useState(0)
   const [fcFlipped,setFcFlipped]= useState(false)
 
-  useImperativeHandle(ref, () => ({ openModal: () => { setStep(1); setDir(1); setModalOpen(true) } }))
+  useImperativeHandle(ref, () => ({ openModal: (defaultTopic?: string) => { setStep(1); setDir(1); setModalOpen(true); if (defaultTopic) setForm(f => ({ ...f, topic: f.topic || defaultTopic })) } }))
 
   // Escape
   useEffect(() => {
@@ -382,12 +385,35 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
 
   function toggleMaterial(m:Material){
     setForm(f=>({...f,materials:f.materials.includes(m)?f.materials.filter(x=>x!==m):[...f.materials,m]}))
-    setFileReady(false)  // reset upload when materials change
+    setFileReady(false)
+    setSelectedFileNames([])
   }
 
-  function simulateUpload() {
-    setUploading(true)
-    setTimeout(() => { setUploading(false); setFileReady(true) }, 1600)
+  function getAcceptAttr(materials: Material[]): string {
+    const types: string[] = []
+    if (materials.includes('PDF'))        types.push('.pdf,application/pdf')
+    if (materials.includes('Screenshot')) types.push('image/*')
+    if (materials.includes('Text'))       types.push('.txt,.md,text/plain')
+    return types.join(',') || '*'
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (files.length > 0) {
+      setSelectedFileNames(files.map(f => f.name))
+      setFileReady(true)
+    }
+  }
+
+  function handleUploadDrop(e: React.DragEvent<HTMLLabelElement>) {
+    e.preventDefault()
+    setIsDragOverUpload(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) {
+      setSelectedFileNames(files.map(f => f.name))
+      setFileReady(true)
+    }
   }
 
   function toggleDone(iso:string){
@@ -439,15 +465,39 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
 
         <div className="px-5 pb-5 space-y-4">
           {!plan && (
-            <button onClick={()=>{setStep(1);setDir(1);setModalOpen(true)}}
-              className="w-full py-3 rounded-xl text-sm font-semibold hover:opacity-80 transition-all"
-              style={{ background:'rgba(124,58,237,0.08)', border:'1px dashed rgba(124,58,237,0.25)', color:'#7c3aed' }}>
-              🗓️ Vygenerovat studijní plán na míru
-            </button>
+            <div className="text-center py-5 space-y-4">
+              <div className="text-4xl">🗓️</div>
+              <div className="space-y-1">
+                <p className="text-sm font-bold" style={{ color:'#94a3b8' }}>Nastav zkouškový termín a Teachio sestaví denní studijní plán</p>
+                <p className="text-xs" style={{ color:'#475569' }}>Kvízy, podcast a flashkarty na každý den — přizpůsobené tvému tempu</p>
+              </div>
+              <button onClick={()=>{setStep(1);setDir(1);setModalOpen(true)}}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm text-white transition-all hover:opacity-90 active:scale-[0.98]"
+                style={{ background:'linear-gradient(135deg,#6366f1,#7c3aed)', boxShadow:'0 8px 24px rgba(99,102,241,0.35)' }}>
+                🗓️ Vytvořit studijní plán
+              </button>
+            </div>
           )}
 
           {plan && plan.studyDays.length > 0 && (
             <>
+              {/* Days remaining countdown */}
+              {daysLeft !== null && daysLeft >= 0 && (
+                <div className="flex items-center gap-3 px-1">
+                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background:'rgba(255,255,255,0.06)' }}>
+                    <div className="h-full rounded-full transition-all duration-700"
+                      style={{
+                        width: `${Math.max(2, 100 - (daysLeft / Math.max(1, dayDiff(fromISO(plan.createdDate), fromISO(plan.examDate)))) * 100)}%`,
+                        background: daysLeft <= 3 ? 'linear-gradient(90deg,#ef4444,#f87171)' : daysLeft <= 7 ? 'linear-gradient(90deg,#d97706,#fbbf24)' : 'linear-gradient(90deg,#6366f1,#a855f7)',
+                      }} />
+                  </div>
+                  <span className="text-xs font-black shrink-0 tabular-nums"
+                    style={{ color: daysLeft === 0 ? '#f87171' : daysLeft <= 3 ? '#fca5a5' : daysLeft <= 7 ? '#fbbf24' : '#a78bfa' }}>
+                    {daysLeft === 0 ? '⚠️ Dnes!' : `za ${daysLeft} ${daysLeft === 1 ? 'den' : daysLeft < 5 ? 'dny' : 'dní'}`}
+                  </span>
+                </div>
+              )}
+
               {/* Timeline */}
               <div className="flex items-center gap-2">
                 <button onClick={()=>setCalOffset(o=>Math.max(0,o-1))} disabled={calOffset===0}
@@ -786,31 +836,67 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                             </div>
                           </div>
 
-                          {/* Language + Source */}
+                          {/* Language + Source — custom dark dropdowns */}
                           <div className="grid grid-cols-2 gap-2">
+                            {/* Language */}
                             <div className="space-y-1">
                               <span className="text-xs font-bold uppercase tracking-widest flex items-center gap-1" style={{ color:'#64748b' }}>
                                 Jazyk<span style={{ color:'#f87171' }}>*</span>
                               </span>
-                              <select value={form.language} onChange={e=>setForm(f=>({...f,language:e.target.value as Language}))}
-                                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                                style={{ background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.08)', color:'#f1f5f9', colorScheme:'dark' }}>
-                                <option value="cs">🇨🇿 Čeština</option>
-                                <option value="en">🇬🇧 Angličtina</option>
-                                <option value="de">🇩🇪 Němčina</option>
-                              </select>
+                              <div className="relative">
+                                <button type="button" onClick={()=>{setLangOpen(v=>!v);setSrcOpen(false)}}
+                                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-all"
+                                  style={{ background:'rgba(255,255,255,0.05)', border:`1px solid ${langOpen?'rgba(124,58,237,0.50)':'rgba(255,255,255,0.08)'}`, color:'#f1f5f9' }}>
+                                  <span>{form.language==='cs'?'🇨🇿 Čeština':form.language==='en'?'🇬🇧 Angličtina':'🇩🇪 Němčina'}</span>
+                                  <span style={{ color:'#475569', fontSize:'10px' }}>▾</span>
+                                </button>
+                                {langOpen && (
+                                  <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl overflow-hidden"
+                                    style={{ background:'rgba(18,18,28,0.98)', border:'1px solid rgba(124,58,237,0.30)', boxShadow:'0 12px 32px rgba(0,0,0,0.6)' }}>
+                                    {([['cs','🇨🇿 Čeština'],['en','🇬🇧 Angličtina'],['de','🇩🇪 Němčina']] as [Language,string][]).map(([val,label])=>(
+                                      <button key={val} type="button"
+                                        onClick={()=>{setForm(f=>({...f,language:val}));setLangOpen(false)}}
+                                        className="w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors hover:bg-white/5"
+                                        style={{ color:form.language===val?'#a78bfa':'#94a3b8' }}>
+                                        {label}
+                                        {form.language===val && <span style={{ color:'#7c3aed', fontSize:'12px' }}>✓</span>}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
+                            {/* Source strategy */}
                             <div className="space-y-1">
                               <span className="text-xs font-bold uppercase tracking-widest flex items-center gap-1" style={{ color:'#64748b' }}>
                                 Zdroj dat<span style={{ color:'#f87171' }}>*</span>
                               </span>
-                              <select value={form.sourceStrat} onChange={e=>setForm(f=>({...f,sourceStrat:e.target.value as SourceStrat}))}
-                                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                                style={{ background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.08)', color:'#f1f5f9', colorScheme:'dark' }}>
-                                <option value="only-mine">Pouze moje materiály</option>
-                                <option value="augmented">Moje mat. + Teachio AI</option>
-                                <option value="teachio-only">Pouze Teachio AI</option>
-                              </select>
+                              <div className="relative">
+                                <button type="button" onClick={()=>{setSrcOpen(v=>!v);setLangOpen(false)}}
+                                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-all"
+                                  style={{ background:'rgba(255,255,255,0.05)', border:`1px solid ${srcOpen?'rgba(124,58,237,0.50)':'rgba(255,255,255,0.08)'}`, color:'#f1f5f9' }}>
+                                  <span className="truncate text-left">{form.sourceStrat==='only-mine'?'Jen moje mat.':form.sourceStrat==='augmented'?'Moje + AI':'Jen Teachio AI'}</span>
+                                  <span style={{ color:'#475569', fontSize:'10px', flexShrink:0, marginLeft:'4px' }}>▾</span>
+                                </button>
+                                {srcOpen && (
+                                  <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl overflow-hidden"
+                                    style={{ background:'rgba(18,18,28,0.98)', border:'1px solid rgba(124,58,237,0.30)', boxShadow:'0 12px 32px rgba(0,0,0,0.6)' }}>
+                                    {([
+                                      ['only-mine',    'Pouze moje materiály'],
+                                      ['augmented',    'Moje mat. + Teachio AI'],
+                                      ['teachio-only', 'Pouze Teachio AI'],
+                                    ] as [SourceStrat,string][]).map(([val,label])=>(
+                                      <button key={val} type="button"
+                                        onClick={()=>{setForm(f=>({...f,sourceStrat:val}));setSrcOpen(false)}}
+                                        className="w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors hover:bg-white/5"
+                                        style={{ color:form.sourceStrat===val?'#a78bfa':'#94a3b8' }}>
+                                        {label}
+                                        {form.sourceStrat===val && <span style={{ color:'#7c3aed', fontSize:'12px' }}>✓</span>}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
 
@@ -820,35 +906,43 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle>((_, ref) => {
                       <p className="text-xs font-bold uppercase tracking-widest flex items-center gap-1" style={{ color:'#64748b' }}>
                         Nahrát materiály<span style={{ color:'#f87171' }}>*</span>
                       </p>
-                      <button type="button" onClick={simulateUpload} disabled={uploading || fileReady}
-                        className="w-full flex flex-col items-center gap-2 py-5 rounded-2xl border-2 border-dashed transition-all"
+                      <label
+                        className="w-full flex flex-col items-center gap-2 py-5 rounded-2xl border-2 border-dashed transition-all cursor-pointer"
                         style={{
-                          borderColor: fileReady?'rgba(74,222,128,0.50)':uploading?'rgba(124,58,237,0.45)':'rgba(255,255,255,0.12)',
-                          background:  fileReady?'rgba(74,222,128,0.06)':uploading?'rgba(124,58,237,0.06)':'rgba(255,255,255,0.02)',
-                        }}>
-                        {uploading ? (
-                          <>
-                            <motion.div animate={{ rotate:360 }} transition={{ duration:1, repeat:Infinity, ease:'linear' }}
-                              className="w-8 h-8 rounded-full border-2"
-                              style={{ borderColor:'rgba(124,58,237,0.25)', borderTopColor:'#7c3aed' }} />
-                            <p className="text-xs font-semibold" style={{ color:'#a78bfa' }}>Nahrávám soubor…</p>
-                          </>
-                        ) : fileReady ? (
+                          borderColor: fileReady ? 'rgba(74,222,128,0.50)' : isDragOverUpload ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.12)',
+                          background:  fileReady ? 'rgba(74,222,128,0.06)' : isDragOverUpload ? 'rgba(124,58,237,0.06)' : 'rgba(255,255,255,0.02)',
+                        }}
+                        onDragEnter={e => { e.preventDefault(); setIsDragOverUpload(true) }}
+                        onDragOver={e => { e.preventDefault(); setIsDragOverUpload(true) }}
+                        onDragLeave={e => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOverUpload(false) }}
+                        onDrop={handleUploadDrop}
+                      >
+                        {fileReady ? (
                           <>
                             <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:'rgba(74,222,128,0.15)' }}>
                               <span className="text-lg">✓</span>
                             </div>
-                            <p className="text-xs font-bold" style={{ color:'#4ade80' }}>Soubor nahrán — připraveno ke generování!</p>
+                            <p className="text-xs font-bold" style={{ color:'#4ade80' }}>
+                              {selectedFileNames.length === 1 ? selectedFileNames[0] : `${selectedFileNames.length} soubory nahrány`}
+                            </p>
+                            <p className="text-xs" style={{ color:'#64748b' }}>Klikni pro změnu</p>
                           </>
                         ) : (
                           <>
                             <span className="text-2xl">📎</span>
-                            <p className="text-xs font-semibold" style={{ color:'#64748b' }}>
-                              Přetáhni nebo klikni pro nahrání {form.materials.join(' / ')}
+                            <p className="text-xs font-semibold" style={{ color: isDragOverUpload ? '#a78bfa' : '#64748b' }}>
+                              {isDragOverUpload ? '🎯 Pusť soubory!' : `Přetáhni nebo klikni pro nahrání ${form.materials.join(' / ')}`}
                             </p>
                           </>
                         )}
-                      </button>
+                        <input
+                          type="file"
+                          multiple
+                          accept={getAcceptAttr(form.materials)}
+                          className="sr-only"
+                          onChange={handleFileInputChange}
+                        />
+                      </label>
                     </div>
                   )}
 

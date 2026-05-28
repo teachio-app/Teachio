@@ -132,24 +132,6 @@ function getGoalMeta(goal: ExamGoal, level: StudyLevel) {
   return base
 }
 
-const LOADING_MESSAGES = [
-  '🔍 Hledám chytáky pro zkoušku…',
-  '📚 Identifikuji klíčové pojmy…',
-  '🎧 Připravuji výukový podcast…',
-  '✍️ Finalizuji chytré výpisky…',
-  '🧩 Generuji interaktivní kvíz…',
-  '🗓️ Sestavuji studijní přehled…',
-]
-
-const BYON_LOADING_MESSAGES = [
-  '📖 Čtu tvoje zápisky…',
-  '🔍 Identifikuji klíčové pojmy…',
-  '📂 Organizuji obsah do modulů…',
-  '🎧 Připravuji podcast z tvých zápisků…',
-  '🧩 Tvořím kvíz na míru…',
-  '✨ Finalizuji studijní přehled…',
-]
-
 const STUDY_FACTS = [
   'Mozek si pamatuje lépe, když látku opakuješ s rozestupem (spaced repetition).',
   'Aktivní vybavování informací je 2× efektivnější než pasivní čtení.',
@@ -267,7 +249,25 @@ function LoadingState({ message }: { message: string }) {
   )
 }
 
-function LoadingStateEnhanced({ messages, msgIdx }: { messages: string[]; msgIdx: number }) {
+const GEN_PHASES  = [
+  { min: 85, label: 'Finalizuji plán…' },
+  { min: 55, label: 'Generuji kvízy a kartičky…' },
+  { min: 20, label: 'Plánuji kapitoly…' },
+  { min: 0,  label: 'Analyzuji materiály…' },
+]
+const BYON_PHASES = [
+  { min: 85, label: 'Finalizuji plán…' },
+  { min: 55, label: 'Generuji kvízy a kartičky…' },
+  { min: 20, label: 'Organizuji zápisky…' },
+  { min: 0,  label: 'Čtu tvoje zápisky…' },
+]
+
+function getPhaseLabel(pct: number, isBYON: boolean) {
+  const phases = isBYON ? BYON_PHASES : GEN_PHASES
+  return phases.find(p => pct >= p.min)?.label ?? phases[phases.length - 1].label
+}
+
+function LoadingStateEnhanced({ isBYON }: { isBYON: boolean }) {
   const [pct, setPct] = useState(0)
   const [factIdx, setFactIdx] = useState(0)
 
@@ -338,14 +338,14 @@ function LoadingStateEnhanced({ messages, msgIdx }: { messages: string[]; msgIdx
           </AnimatePresence>
         </div>
 
-        {/* Cycling status message */}
+        {/* Phase label tied to percentage */}
         <div className="space-y-1">
           <AnimatePresence mode="wait">
-            <motion.p key={messages[msgIdx]}
+            <motion.p key={getPhaseLabel(pct, isBYON)}
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}
               className="font-semibold text-lg" style={{ color: '#f4f4f8' }}>
-              {messages[msgIdx]}
+              {getPhaseLabel(pct, isBYON)}
             </motion.p>
           </AnimatePresence>
           <p className="text-sm" style={{ color: '#62627a' }}>Může trvat cca 30 vteřin</p>
@@ -550,20 +550,12 @@ export default function StudentPage() {
   const [loading,   setLoading]   = useState(false)
   const [notes,     setNotes]     = useState<SmartNotes | null>(null)
   const [error,     setError]     = useState<string | null>(null)
-  const [msgIdx,    setMsgIdx]    = useState(0)
   const calendarRef = useRef<ExamCalendarHandle>(null)
   const [bentoModal, setBentoModal] = useState<'podcast' | 'quiz' | 'flashcards' | 'game' | null>(null)
   const [bentoFlipped, setBentoFlipped] = useState(false)
   const [bentoAudioPlaying, setBentoAudioPlaying] = useState(false)
 
   const demoContent = useMemo(() => buildTopicDemo(topic), [topic])
-
-  useEffect(() => {
-    if (!loading) { setMsgIdx(0); return }
-    const msgs = inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES
-    const id = setInterval(() => setMsgIdx(i => (i + 1) % msgs.length), 1900)
-    return () => clearInterval(id)
-  }, [loading, inputMode])
 
   // Clear results and all upload state when switching input mode
   useEffect(() => {
@@ -718,10 +710,10 @@ export default function StudentPage() {
       className="-mt-10 -mb-10 relative"
       style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)', minHeight: '100vh' }}
     >
-      <div className="relative max-w-2xl mx-auto px-4 sm:px-6 py-12 pb-28 sm:pb-12 space-y-7">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 pb-28 sm:pb-12">
 
         {/* ── Logo + tagline ── */}
-        <div className="text-center space-y-2 pt-2">
+        <div className="text-center space-y-2 pt-2 mb-8">
           <div className="flex justify-center mb-4">
             <motion.div
               animate={{ scale: [1, 1.06, 1] }}
@@ -742,6 +734,12 @@ export default function StudentPage() {
             Zadej téma nebo nahraj zápisky — Teachio vygeneruje vše za tebe
           </p>
         </div>
+
+        {/* ── Main two-col grid ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+
+        {/* LEFT: generator + loading + results */}
+        <div className="lg:col-span-8 space-y-7">
 
         {/* ── Central AI Input Bar ── */}
         <form onSubmit={submit}>
@@ -965,7 +963,7 @@ export default function StudentPage() {
 
               {/* ── Secondary actions ── */}
               {!loading && (
-                <div className="flex items-center flex-wrap gap-2 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center flex-wrap gap-2 pt-1 lg:hidden" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   <span className="text-xs font-semibold" style={{ color: '#334155' }}>nebo rovnou:</span>
                   <button type="button" onClick={() => calendarRef.current?.openModal(topic || undefined)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
@@ -992,12 +990,9 @@ export default function StudentPage() {
           </div>
         </form>
 
-        {/* ── Bento grid — shown only in idle state ── */}
+        {/* ── Bento grid — shown on mobile only in idle state ── */}
         {!notes && !loading && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-            {/* Interactive Exam Calendar */}
-            <ExamCalendar ref={calendarRef} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:hidden gap-4">
 
             {/* Feature: Podcast */}
             <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -1094,10 +1089,7 @@ export default function StudentPage() {
         {/* ── Loading ── */}
         {loading && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-8">
-            <LoadingStateEnhanced
-              messages={inputMode === 'notes' ? BYON_LOADING_MESSAGES : LOADING_MESSAGES}
-              msgIdx={msgIdx}
-            />
+            <LoadingStateEnhanced isBYON={inputMode === 'notes'} />
           </motion.div>
         )}
 
@@ -1361,6 +1353,42 @@ export default function StudentPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        </div> {/* end left col */}
+
+        {/* RIGHT: sticky sidebar — desktop only */}
+        <aside className="hidden lg:flex lg:col-span-4 flex-col gap-4" style={{ position: 'sticky', top: '72px', alignSelf: 'start' }}>
+          <ExamCalendar ref={calendarRef} />
+          <div className="rounded-2xl p-4 space-y-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <p className="text-xs font-bold uppercase tracking-widest px-1" style={{ color: '#475569' }}>Rychlé akce</p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { icon: '🗓️', label: 'Studijní plán', action: () => calendarRef.current?.openModal(topic || undefined) },
+                { icon: '🎧', label: 'Audio Tutor',   action: () => setBentoModal('podcast') },
+                { icon: '🎙️', label: 'Podcast',       href: '/student/podcast' },
+                { icon: '🧩', label: 'Kvíz',          href: '/student/quiz' },
+                { icon: '🃏', label: 'Kartičky',      href: '/student/flashcards' },
+                { icon: '🕹️', label: 'Hra',           href: '/student/game' },
+              ] as Array<{ icon: string; label: string; href?: string; action?: () => void }>).map(item => 'href' in item && item.href ? (
+                <Link key={item.label} href={item.href}
+                  className="flex flex-col items-center gap-2 p-3 rounded-xl text-center transition-all hover:opacity-80"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <span className="text-2xl">{item.icon}</span>
+                  <span className="text-xs font-semibold" style={{ color: '#94a3b8' }}>{item.label}</span>
+                </Link>
+              ) : (
+                <button key={item.label} type="button" onClick={item.action}
+                  className="flex flex-col items-center gap-2 p-3 rounded-xl text-center transition-all hover:opacity-80"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <span className="text-2xl">{item.icon}</span>
+                  <span className="text-xs font-semibold" style={{ color: '#94a3b8' }}>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        </div> {/* end grid */}
 
         <FloatingChat
           documentContext={notes
