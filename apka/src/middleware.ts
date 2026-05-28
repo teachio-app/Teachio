@@ -31,15 +31,23 @@ export async function middleware(request: NextRequest) {
   )
 
   // ── Auth check ────────────────────────────────────────────────────────────
-  const { data: { user } } = await supabase.auth.getUser()
+  // Wrapped in try-catch: if Supabase is unreachable (network error, edge
+  // timeout) we treat the user as unauthenticated and let the request through
+  // rather than returning a 500 that makes nav buttons appear broken.
+  let user: { id: string } | null = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch {
+    // Supabase unavailable — fail open (public routes remain accessible)
+  }
   const { pathname } = request.nextUrl
 
   // Non-authenticated users can only reach public paths
   const isProtected =
     isUnderPrefix(pathname, TEACHER_PREFIXES) ||
     isUnderPrefix(pathname, STUDENT_PREFIXES) ||
-    pathname === '/onboarding' ||
-    pathname === '/pricing'
+    pathname === '/onboarding'
 
   if (!user && isProtected) {
     return NextResponse.redirect(new URL('/login', request.url))
@@ -99,7 +107,6 @@ export const config = {
     '/student/:path*',
     '/generator/:path*',
     '/profil/:path*',
-    '/pricing',
     '/onboarding',
     '/login',
     '/signup',
