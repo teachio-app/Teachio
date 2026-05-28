@@ -117,19 +117,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base" style={{ color: '#62627a' }}>✉</span>
                 <input id="email" name="email" type="email" placeholder="tvuj@email.cz"
                   required autoComplete="email"
-                  className="w-full h-12 pl-10 pr-4 rounded-xl text-sm transition-all outline-none"
+                  className="auth-input w-full h-12 pl-10 pr-4 rounded-xl text-sm transition-all outline-none"
                   style={{
                     background: 'rgba(255,255,255,0.05)',
                     border: '1px solid rgba(255,255,255,0.10)',
                     color: '#f4f4f8',
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = '#7c3aed'
-                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(124,58,237,0.20)'
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'
-                    e.currentTarget.style.boxShadow = 'none'
                   }}
                 />
               </div>
@@ -149,19 +141,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base" style={{ color: '#62627a' }}>🔒</span>
                 <input id="password" name="password" type="password" placeholder="••••••••"
                   required autoComplete="current-password"
-                  className="w-full h-12 pl-10 pr-4 rounded-xl text-sm transition-all outline-none"
+                  className="auth-input w-full h-12 pl-10 pr-4 rounded-xl text-sm transition-all outline-none"
                   style={{
                     background: 'rgba(255,255,255,0.05)',
                     border: '1px solid rgba(255,255,255,0.10)',
                     color: '#f4f4f8',
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = '#7c3aed'
-                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(124,58,237,0.20)'
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'
-                    e.currentTarget.style.boxShadow = 'none'
                   }}
                 />
               </div>

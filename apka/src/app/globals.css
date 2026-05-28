@@ -325,6 +325,13 @@
   transition: width 0.4s var(--ease-smooth);
 }
 
+/* ── Auth input focus (CSS replaces onFocus/onBlur handlers in server components) */
+.auth-input:focus {
+  border-color: #7c3aed !important;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.20) !important;
+  outline: none;
+}
+
 /* ── Announcement bar ───────────────────────────────────────────────────────── */
 
 .announcement-bar {
