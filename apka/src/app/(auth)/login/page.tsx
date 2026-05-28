@@ -133,9 +133,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 <label htmlFor="password" className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#a1a1b8' }}>
                   Heslo
                 </label>
-                <a href="#" className="text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#7c3aed' }}>
+                <Link href="/forgot-password" className="text-xs font-semibold transition-colors hover:opacity-80" style={{ color: '#7c3aed' }}>
                   Zapomněli jste heslo?
-                </a>
+                </Link>
               </div>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base" style={{ color: '#62627a' }}>🔒</span>

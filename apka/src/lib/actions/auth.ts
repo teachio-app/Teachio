@@ -76,3 +76,40 @@ export async function logout() {
   await supabase.auth.signOut()
   redirect('/login')
 }
+
+export async function resetPassword(formData: FormData) {
+  const email = formData.get('email') as string
+  if (!email) {
+    redirect('/forgot-password?error=' + encodeURIComponent('Zadej prosím svůj e-mail.'))
+  }
+
+  const supabase = await createClient()
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://apka-chi.vercel.app'
+
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${siteUrl}/auth/callback?next=/update-password`,
+  })
+
+  if (error) {
+    redirect('/forgot-password?error=' + encodeURIComponent('Nepodařilo se odeslat e-mail. Zkus to znovu.'))
+  }
+
+  redirect('/forgot-password?message=' + encodeURIComponent('Odkaz pro reset hesla byl odeslán na ' + email + '. Zkontroluj svou schránku.'))
+}
+
+export async function updatePassword(formData: FormData) {
+  const password = formData.get('password') as string
+  if (!password || password.length < 6) {
+    redirect('/update-password?error=' + encodeURIComponent('Heslo musí mít alespoň 6 znaků.'))
+  }
+
+  const supabase = await createClient()
+  const { error } = await supabase.auth.updateUser({ password })
+
+  if (error) {
+    redirect('/update-password?error=' + encodeURIComponent('Nepodařilo se změnit heslo. Zkus to znovu.'))
+  }
+
+  revalidatePath('/', 'layout')
+  redirect('/login?message=' + encodeURIComponent('Heslo bylo úspěšně změněno. Přihlaš se.'))
+}

@@ -110,5 +110,7 @@ export const config = {
     '/onboarding',
     '/login',
     '/signup',
+    '/forgot-password',
+    '/update-password',
   ],
 }
