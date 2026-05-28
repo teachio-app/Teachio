@@ -7,21 +7,35 @@ import Link from 'next/link'
 
 function Nav() {
   const [scrolled, setScrolled] = useState(false)
-  const [mobileOpen, setMobileOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
 
   useEffect(() => {
+    setMounted(true)
     const onScroll = () => setScrolled(window.scrollY > 20)
     window.addEventListener('scroll', onScroll, { passive: true })
+    // Check auth via Supabase browser client
+    import('@/lib/supabase/client').then(({ createClient }) => {
+      const supabase = createClient()
+      supabase.auth.getSession().then(({ data }) => {
+        setUserEmail(data.session?.user?.email ?? null)
+      })
+    }).catch(() => {})
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
+
+  // initials from email
+  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : ''
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50">
       {/* Announcement bar — part of the fixed block so it never gets covered */}
-      <div className="announcement-bar">
-        🎓 Teachio je zdarma pro studenty středních škol —{' '}
-        <Link href="/signup" className="font-bold underline underline-offset-2">Začni teď →</Link>
-      </div>
+      {!userEmail && (
+        <div className="announcement-bar">
+          🎓 Teachio je zdarma pro studenty středních škol —{' '}
+          <Link href="/signup" className="font-bold underline underline-offset-2">Začni teď →</Link>
+        </div>
+      )}
     <nav
       className="transition-all duration-500"
       style={{
@@ -47,6 +61,8 @@ function Nav() {
             { href: '#features', label: 'Funkce' },
             { href: '#how', label: 'Jak to funguje' },
             { href: '/pricing', label: 'Ceny' },
+            { href: '/o-nas', label: 'O nás' },
+            { href: '/blog', label: 'Blog' },
           ].map(l => (
             <a key={l.href} href={l.href}
               className="text-sm font-medium transition-colors hover:text-white"
@@ -56,19 +72,36 @@ function Nav() {
           ))}
         </div>
 
-        {/* CTA row */}
-        <div className="flex items-center gap-3">
-          <Link href="/login"
-            className="hidden sm:block text-sm font-semibold px-4 py-2 rounded-xl transition-all hover:opacity-80"
-            style={{ color: '#a1a1b8' }}>
-            Přihlásit se
-          </Link>
-          <Link href="/signup"
-            className="text-sm font-bold px-5 py-2.5 rounded-full text-white transition-all hover:scale-105"
-            style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', boxShadow: '0 4px 20px rgba(124,58,237,0.40)' }}>
-            Začít zdarma →
-          </Link>
-        </div>
+        {/* CTA row — logged-out vs logged-in */}
+        {mounted && userEmail ? (
+          <div className="flex items-center gap-3">
+            <Link href="/student"
+              className="hidden sm:flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all hover:opacity-80"
+              style={{ color: '#a78bfa' }}>
+              <span>📚</span> Pokračovat v učení
+            </Link>
+            <Link href="/student"
+              className="flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-full text-white transition-all hover:scale-105"
+              style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', boxShadow: '0 4px 20px rgba(124,58,237,0.40)' }}>
+              <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-black shrink-0"
+                style={{ background: 'rgba(255,255,255,0.2)' }}>{initials}</span>
+              Otevřít aplikaci
+            </Link>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Link href="/login"
+              className="hidden sm:block text-sm font-semibold px-4 py-2 rounded-xl transition-all hover:opacity-80"
+              style={{ color: '#a1a1b8' }}>
+              Přihlásit se
+            </Link>
+            <Link href="/signup"
+              className="text-sm font-bold px-5 py-2.5 rounded-full text-white transition-all hover:scale-105"
+              style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', boxShadow: '0 4px 20px rgba(124,58,237,0.40)' }}>
+              Začít zdarma →
+            </Link>
+          </div>
+        )}
       </div>
     </nav>
     </div>

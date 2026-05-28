@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { ExamCalendar, type ExamCalendarHandle } from '@/components/student/ExamCalendar'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -227,6 +228,7 @@ function FeatureCard({ emoji, iconGradient, title, sub, accentColor, onClick }: 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function StudentPage() {
+  const router = useRouter()
   const { lang, t } = useLanguage()
   const st = t.student
 
@@ -253,7 +255,7 @@ export default function StudentPage() {
 
   // New: rotating placeholder + exam strip info
   const [placeholderIdx, setPlaceholderIdx] = useState(0)
-  const [examInfo, setExamInfo] = useState<{ subject?: string; daysLeft?: number; hasPlan?: boolean } | null>(null)
+  const [examInfo, setExamInfo] = useState<{ subject?: string; daysLeft?: number; hasPlan?: boolean; planId?: string } | null>(null)
 
   useEffect(() => {
     const id = setInterval(() => setPlaceholderIdx(i => (i + 1) % TOPIC_PLACEHOLDERS.length), 3000)
@@ -262,6 +264,21 @@ export default function StudentPage() {
 
   useEffect(() => {
     try {
+      // Check studijni-plan storage first (newest plans from the wizard)
+      const plansRaw = localStorage.getItem('teachio:plans:v1')
+      if (plansRaw) {
+        const plans = JSON.parse(plansRaw) as Array<{ id: string; subject: string; examDate: string; totalSessions: number }>
+        if (Array.isArray(plans) && plans.length > 0) {
+          const latest = plans[0]
+          if (latest?.examDate) {
+            const today = new Date(); today.setHours(0, 0, 0, 0)
+            const daysLeft = Math.round((new Date(latest.examDate).getTime() - today.getTime()) / 86400000)
+            setExamInfo({ subject: latest.subject, daysLeft: daysLeft > 0 ? daysLeft : 0, hasPlan: (latest.totalSessions ?? 0) > 0, planId: latest.id })
+            return
+          }
+        }
+      }
+      // Fall back to inline ExamCalendar storage
       const raw = localStorage.getItem('teachio_exam_plan_v4')
       if (raw) {
         const p = JSON.parse(raw)
@@ -651,7 +668,10 @@ export default function StudentPage() {
                 variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] } } }}
               >
                 <button
-                  onClick={() => calendarRef.current?.openModal()}
+                  onClick={() => {
+                    if (examInfo?.planId) router.push(`/studijni-plan/${examInfo.planId}`)
+                    else calendarRef.current?.openModal()
+                  }}
                   className="w-full flex items-center gap-3 px-5 py-4 rounded-2xl text-left transition-all hover:scale-[1.01] active:scale-[0.99]"
                   style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.14)' }}
                 >

@@ -4,6 +4,7 @@ import {
   useState, useEffect, useMemo, useRef, useCallback,
   forwardRef, useImperativeHandle,
 } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -154,6 +155,11 @@ const PHASE_LABEL: Record<Phase, string> = {
 const AI_PHASE_MAP: Record<string, Phase> = {
   'ÚVOD': 'intro', 'PROHLUBOVÁNÍ': 'deepen', 'PROCVIČENÍ': 'practice',
   'OPAKOVÁNÍ': 'review', 'FINALE': 'final',
+}
+
+const PHASE_REVERSE: Record<Phase, string> = {
+  intro: 'ÚVOD', deepen: 'PROHLUBOVÁNÍ', practice: 'PROCVIČENÍ',
+  review: 'OPAKOVÁNÍ', final: 'FINALE',
 }
 
 const STORAGE_KEY = 'teachio_exam_plan_v4'
@@ -323,6 +329,7 @@ function Req({ children }: { children: React.ReactNode }) {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export const ExamCalendar = forwardRef<ExamCalendarHandle, { hideCard?: boolean }>(({ hideCard }, ref) => {
+  const router = useRouter()
   const [plan,       setPlan]       = useState<ExamPlan|null>(null)
   const [modalOpen,  setModalOpen]  = useState(false)
   const [form,       setForm]       = useState(DEFAULT)
@@ -387,6 +394,13 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle, { hideCard?: boolean 
 
   async function generate(){
     go(4)
+    const ctrl = new AbortController()
+    const timeoutId = setTimeout(() => ctrl.abort(), 45_000)
+
+    let studyDays: StudyDay[] = []
+    let aiMotivation: string | undefined
+    let aiPhases: unknown[] | undefined
+
     try {
       const res = await fetch('/api/generate-study-plan', {
         method: 'POST',
@@ -400,10 +414,10 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle, { hideCard?: boolean 
           intensity:  form.intensity,
           language:   form.language,
         }),
+        signal: ctrl.signal,
       })
+      clearTimeout(timeoutId)
       const data = await res.json()
-
-      let studyDays: StudyDay[]
 
       if (res.ok && data.days) {
         studyDays = (data.days as Record<string, unknown>[]).map(d => {
@@ -429,21 +443,59 @@ export const ExamCalendar = forwardRef<ExamCalendarHandle, { hideCard?: boolean 
             podcastHint:      d.podcastHint ? String(d.podcastHint) : undefined,
           }
         })
-        savePlan({
-          ...form, topic: form.topic.trim(), studyDays,
-          completedDates: [], createdDate: todayISO,
-          aiMotivation: data.motivation ?? undefined,
-        })
+        aiMotivation = data.motivation ?? undefined
+        aiPhases = Array.isArray(data.phases) ? data.phases : undefined
       } else {
-        // Fallback to static plan if API fails
         studyDays = generatePlan(form)
-        savePlan({ ...form, topic: form.topic.trim(), studyDays, completedDates: [], createdDate: todayISO })
       }
     } catch {
-      const studyDays = generatePlan(form)
-      savePlan({ ...form, topic: form.topic.trim(), studyDays, completedDates: [], createdDate: todayISO })
+      clearTimeout(timeoutId)
+      studyDays = generatePlan(form)
     }
+
+    // Save to ExamCalendar's own storage key (for the inline widget)
+    savePlan({
+      ...form, topic: form.topic.trim(), studyDays,
+      completedDates: [], createdDate: todayISO, aiMotivation,
+    })
+
+    // Save in studijni-plan format so the dedicated plan page can read it
+    const planId = `plan_${Date.now()}`
+    const planForView = {
+      id: planId,
+      subject: form.topic.trim(),
+      examDate: form.examDate,
+      dailyMinutes: 45,
+      createdAt: todayISO,
+      totalSessions: studyDays.length,
+      completedSessions: 0,
+      motivation: aiMotivation,
+      phases: aiPhases,
+      days: studyDays.map((sd, idx) => ({
+        dayNumber: idx + 1,
+        date: sd.date,
+        phase: PHASE_REVERSE[sd.phase],
+        title: sd.title || sd.task || sd.phaseName,
+        mainTask: sd.modules.notes,
+        estimatedMinutes: sd.estimatedMinutes ?? 45,
+        learningTip: sd.modules.trivia,
+        todaysMood: sd.todaysMood,
+        isToday: idx === 0,
+        specificSteps: sd.specificSteps,
+        interestingFact: sd.interestingFact,
+        flashcardPrompt: sd.flashcardPrompt,
+        podcastHint: sd.podcastHint,
+      })),
+    }
+    try {
+      localStorage.setItem(`teachio:plan:${planId}`, JSON.stringify(planForView))
+      const existing = JSON.parse(localStorage.getItem('teachio:plans:v1') ?? '[]') as unknown[]
+      existing.unshift({ id: planId, subject: form.topic.trim(), examDate: form.examDate, totalSessions: studyDays.length, completedSessions: 0, createdAt: todayISO })
+      localStorage.setItem('teachio:plans:v1', JSON.stringify(existing))
+    } catch {}
+
     setCalOffset(0); setActiveDay(null); setModalOpen(false); setStep(1)
+    router.push(`/studijni-plan/${planId}`)
   }
 
   function toggleMaterial(m:Material){
