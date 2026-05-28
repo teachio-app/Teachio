@@ -2,9 +2,17 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { PublicShell } from '@/components/ui/PublicShell'
 import Link from 'next/link'
+import type { PodcastTurn } from '@/types'
 
+const PodcastPlayer = dynamic(
+  () => import('@/components/student/PodcastPlayer').then(m => ({ default: m.PodcastPlayer })),
+  { ssr: false }
+)
+
+// ── Constants ──────────────────────────────────────────────────────────────────
 const serif: React.CSSProperties = { fontFamily: 'var(--font-playfair), Georgia, serif' }
 const TEXT = '#f1f5f9'
 const MUT  = '#94a3b8'
@@ -37,7 +45,23 @@ interface FullPlan {
   days?: DayPlan[]
 }
 
-type Tab = 'study' | 'kviz' | 'karty' | 'hra'
+interface LessonContent {
+  specificSteps:  string[]
+  flashcardPrompt: string[]
+  interestingFact: string
+  learningTip:    string
+  podcast_script: PodcastTurn[]
+}
+
+type Tab = 'study' | 'podcast' | 'kviz' | 'karty' | 'hra'
+
+const TABS: { key: Tab; emoji: string; label: string }[] = [
+  { key: 'study',   emoji: '📖', label: 'Studium'  },
+  { key: 'podcast', emoji: '🎧', label: 'Podcast'  },
+  { key: 'kviz',    emoji: '🧩', label: 'Kvíz'     },
+  { key: 'karty',   emoji: '🃏', label: 'Karty'    },
+  { key: 'hra',     emoji: '🕹️', label: 'Hra'       },
+]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -46,46 +70,39 @@ function daysLeft(examDate: string) {
   return Math.max(0, Math.round((new Date(examDate).getTime() - today.getTime()) / 86400000))
 }
 
-// ── Fallback content ───────────────────────────────────────────────────────────
-// Used when AI didn't produce specificSteps or flashcardPrompt for this lesson.
-// TODO: Replace with a call to /api/generate-lesson-content for richer AI content.
-
-function fallbackSteps(subject: string, title: string): string[] {
-  return [
-    `Přečti si kapitolu věnovanou tématu „${title}" ve svých studijních materiálech.`,
-    `Vypiš si 5 klíčových pojmů, které si musíš zapamatovat — bez koukání do textu.`,
-    `Vysvětli hlavní myšlenku vlastními slovy, jako by sis to vysvětloval/a kamarádovi.`,
-    `Porovnej svůj výklad s učebnicí a doplň, co chybí.`,
-    `Zopakuj 3× pojmy, které se ti zdají nejtěžší — metodou aktivního vzpomínání.`,
-  ]
-}
-
-function fallbackCards(subject: string, title: string): string[] {
-  return [
-    `${title}: Klíčové téma z předmětu ${subject}`,
-    `Definice: Souhrn znalostí a konceptů vztahujících se k tématu ${title}`,
-    `Příklad: Praktická aplikace poznatků z tématu ${title} v reálné situaci`,
-    `Kontext: Historické nebo vědecké pozadí tématu ${title}`,
-    `Souvislosti: Jak téma ${title} navazuje na další části předmětu ${subject}`,
-  ]
-}
-
-// ── Card parser ────────────────────────────────────────────────────────────────
-
 function parseCard(raw: string): { term: string; def: string } {
-  const sepIdx = raw.indexOf(': ')
-  if (sepIdx > 0 && sepIdx < 80) return { term: raw.slice(0, sepIdx), def: raw.slice(sepIdx + 2) }
-  const qIdx = raw.indexOf('? ')
-  if (qIdx > 0 && qIdx < 80) return { term: raw.slice(0, qIdx + 1), def: raw.slice(qIdx + 2) }
+  const sep = raw.indexOf(': ')
+  if (sep > 0 && sep < 90) return { term: raw.slice(0, sep), def: raw.slice(sep + 2) }
+  const q = raw.indexOf('? ')
+  if (q > 0 && q < 90) return { term: raw.slice(0, q + 1), def: raw.slice(q + 2) }
   return { term: raw, def: '' }
+}
+
+// ── Skeleton loaders ───────────────────────────────────────────────────────────
+
+function SkeletonLines({ n = 4 }: { n?: number }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {Array.from({ length: n }).map((_, i) => (
+        <div key={i} style={{ height: 14, borderRadius: 6, background: 'rgba(255,255,255,0.07)', width: `${75 + (i % 3) * 8}%`, animation: 'pub-fadeUp 1.4s ease-in-out infinite alternate' }} />
+      ))}
+    </div>
+  )
 }
 
 // ── Study tab ──────────────────────────────────────────────────────────────────
 
-function StudyView({ day, subject }: { day: DayPlan; subject: string }) {
-  const steps = (day.specificSteps?.length ?? 0) > 0
-    ? day.specificSteps!
-    : fallbackSteps(subject, day.title)
+function StudyView({
+  day, aiContent, aiLoading,
+}: {
+  day: DayPlan
+  aiContent: LessonContent | null
+  aiLoading: boolean
+}) {
+  const steps       = aiContent?.specificSteps  ?? day.specificSteps  ?? []
+  const fact        = aiContent?.interestingFact ?? day.interestingFact
+  const tip         = aiContent?.learningTip     ?? day.learningTip
+  const hint        = day.podcastHint
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -97,49 +114,113 @@ function StudyView({ day, subject }: { day: DayPlan; subject: string }) {
       )}
 
       <div>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 14 }}>Postup – krok za krokem</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {steps.map((s, i) => (
-            <div key={i} style={{ display: 'flex', gap: 14, padding: '12px 16px', background: BG2, border: `1px solid ${BD}`, borderRadius: 12 }}>
-              <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: '#fff', flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
-              <p style={{ fontSize: 13, color: MUT, lineHeight: 1.7, flex: 1, margin: 0 }}>{s}</p>
-            </div>
-          ))}
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 14 }}>
+          Postup – krok za krokem
+          {aiLoading && !steps.length && <span style={{ color: DIM, fontWeight: 400, marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>· generuji…</span>}
         </div>
+        {steps.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {steps.map((s, i) => (
+              <div key={i} style={{ display: 'flex', gap: 14, padding: '12px 16px', background: BG2, border: `1px solid ${BD}`, borderRadius: 12 }}>
+                <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: '#fff', flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                <p style={{ fontSize: 13, color: MUT, lineHeight: 1.7, flex: 1, margin: 0 }}>{s}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ padding: '16px', background: BG2, border: `1px solid ${BD}`, borderRadius: 12 }}>
+            <SkeletonLines n={4} />
+          </div>
+        )}
       </div>
 
-      {day.interestingFact && (
-        <div style={{ padding: '14px 18px', background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.22)', borderRadius: 14, fontSize: 13, color: '#c4b5fd', lineHeight: 1.7 }}>
-          🌟 {day.interestingFact}
+      {(fact || aiLoading) && (
+        <div style={{ padding: '14px 18px', background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.22)', borderRadius: 14, fontSize: 13, color: '#c4b5fd', lineHeight: 1.7, minHeight: 48 }}>
+          {fact ? <>🌟 {fact}</> : <SkeletonLines n={2} />}
         </div>
       )}
 
-      {day.learningTip && (
-        <div style={{ padding: '14px 18px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.18)', borderRadius: 14, fontSize: 13, color: '#818cf8', lineHeight: 1.7 }}>
-          💡 {day.learningTip}
+      {(tip || aiLoading) && (
+        <div style={{ padding: '14px 18px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.18)', borderRadius: 14, fontSize: 13, color: '#818cf8', lineHeight: 1.7, minHeight: 48 }}>
+          {tip ? <>💡 {tip}</> : <SkeletonLines n={2} />}
         </div>
       )}
 
-      {day.podcastHint && (
+      {hint && (
         <div style={{ padding: '14px 18px', background: 'rgba(244,114,182,0.07)', border: '1px solid rgba(244,114,182,0.20)', borderRadius: 14, fontSize: 13, color: '#f9a8d4', lineHeight: 1.7 }}>
-          🎧 <strong style={{ color: '#f472b6' }}>Tip na podcast:</strong> {day.podcastHint}
+          🎧 <strong style={{ color: '#f472b6' }}>Tip na podcast:</strong> {hint}
         </div>
       )}
     </div>
   )
 }
 
+// ── Podcast tab ────────────────────────────────────────────────────────────────
+
+function PodcastTab({ aiContent, aiLoading }: { aiContent: LessonContent | null; aiLoading: boolean }) {
+  if (aiLoading && !aiContent?.podcast_script?.length) {
+    return (
+      <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(244,114,182,0.10)', border: '1px solid rgba(244,114,182,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, margin: '0 auto 16px' }}>🎧</div>
+        <p style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Připravuji podcast…</p>
+        <p style={{ fontSize: 13, color: MUT }}>Generuji dialog učitelky a studenta o této lekci.</p>
+        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 380, margin: '20px auto 0' }}>
+          <SkeletonLines n={3} />
+        </div>
+      </div>
+    )
+  }
+
+  if (!aiContent?.podcast_script?.length) {
+    return (
+      <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🎧</div>
+        <p style={{ fontSize: 14, color: MUT }}>Podcast pro tuto lekci nebyl vygenerován.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ maxWidth: 600, margin: '0 auto' }}>
+      <PodcastPlayer podcast_script={aiContent.podcast_script} />
+    </div>
+  )
+}
+
 // ── Quiz tab ───────────────────────────────────────────────────────────────────
 
-function QuizView({ day, subject }: { day: DayPlan; subject: string }) {
-  const cards = useMemo(() =>
-    ((day.flashcardPrompt?.length ?? 0) > 0 ? day.flashcardPrompt! : fallbackCards(subject, day.title)).map(parseCard),
-  [day, subject])
+function QuizView({
+  day, aiContent, aiLoading,
+}: {
+  day: DayPlan
+  aiContent: LessonContent | null
+  aiLoading: boolean
+}) {
+  const rawCards = aiContent?.flashcardPrompt ?? day.flashcardPrompt ?? []
+  const cards = useMemo(() => rawCards.map(parseCard), [rawCards])
 
   const [current,  setCurrent]  = useState(0)
   const [revealed, setRevealed] = useState(false)
   const [correct,  setCorrect]  = useState(0)
   const [done,     setDone]     = useState(false)
+
+  // Reset when cards change (AI content loaded)
+  useEffect(() => { setCurrent(0); setRevealed(false); setCorrect(0); setDone(false) }, [cards.length])
+
+  if (aiLoading && !cards.length) {
+    return (
+      <div style={{ maxWidth: 560, margin: '0 auto' }}>
+        <div style={{ padding: '28px 24px', background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.28)', borderRadius: 20, marginBottom: 16, minHeight: 120 }}>
+          <SkeletonLines n={3} />
+        </div>
+        <div style={{ height: 44, borderRadius: 14, background: 'rgba(255,255,255,0.05)', animation: 'pub-fadeUp 1.4s ease-in-out infinite alternate' }} />
+      </div>
+    )
+  }
+
+  if (!cards.length) return (
+    <div style={{ textAlign: 'center', padding: '60px 24px', color: MUT, fontSize: 14 }}>Kartičky nejsou k dispozici.</div>
+  )
 
   if (done) return (
     <div style={{ textAlign: 'center', padding: '64px 24px' }}>
@@ -154,7 +235,6 @@ function QuizView({ day, subject }: { day: DayPlan; subject: string }) {
   )
 
   const card = cards[current]
-
   const next = (isCorrect: boolean) => {
     if (isCorrect) setCorrect(c => c + 1)
     if (current + 1 >= cards.length) setDone(true)
@@ -203,13 +283,34 @@ function QuizView({ day, subject }: { day: DayPlan; subject: string }) {
 
 // ── Flashcards tab ─────────────────────────────────────────────────────────────
 
-function CardsView({ day, subject }: { day: DayPlan; subject: string }) {
-  const cards = useMemo(() =>
-    ((day.flashcardPrompt?.length ?? 0) > 0 ? day.flashcardPrompt! : fallbackCards(subject, day.title)).map(parseCard),
-  [day, subject])
+function CardsView({
+  day, aiContent, aiLoading,
+}: {
+  day: DayPlan
+  aiContent: LessonContent | null
+  aiLoading: boolean
+}) {
+  const rawCards = aiContent?.flashcardPrompt ?? day.flashcardPrompt ?? []
+  const cards = useMemo(() => rawCards.map(parseCard), [rawCards])
 
   const [idx,     setIdx]     = useState(0)
   const [flipped, setFlipped] = useState(false)
+
+  useEffect(() => { setIdx(0); setFlipped(false) }, [cards.length])
+
+  if (aiLoading && !cards.length) {
+    return (
+      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+        <div style={{ padding: '52px 32px', borderRadius: 20, background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.28)', minHeight: 210, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <SkeletonLines n={2} />
+        </div>
+      </div>
+    )
+  }
+
+  if (!cards.length) return (
+    <div style={{ textAlign: 'center', padding: '60px 24px', color: MUT, fontSize: 14 }}>Kartičky nejsou k dispozici.</div>
+  )
 
   const card = cards[idx]
 
@@ -239,15 +340,11 @@ function CardsView({ day, subject }: { day: DayPlan; subject: string }) {
       </div>
 
       <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-        <button
-          onClick={() => { setIdx(i => Math.max(0, i - 1)); setFlipped(false) }}
-          disabled={idx === 0}
+        <button onClick={() => { setIdx(i => Math.max(0, i - 1)); setFlipped(false) }} disabled={idx === 0}
           style={{ flex: 1, padding: '10px', borderRadius: 12, background: BG2, border: `1px solid ${BD}`, color: idx === 0 ? DIM : MUT, fontSize: 13, fontWeight: 700, cursor: idx === 0 ? 'default' : 'pointer' }}>
           ← Předchozí
         </button>
-        <button
-          onClick={() => { setIdx(i => Math.min(cards.length - 1, i + 1)); setFlipped(false) }}
-          disabled={idx === cards.length - 1}
+        <button onClick={() => { setIdx(i => Math.min(cards.length - 1, i + 1)); setFlipped(false) }} disabled={idx === cards.length - 1}
           style={{ flex: 1, padding: '10px', borderRadius: 12, background: BG2, border: `1px solid ${BD}`, color: idx === cards.length - 1 ? DIM : MUT, fontSize: 13, fontWeight: 700, cursor: idx === cards.length - 1 ? 'default' : 'pointer' }}>
           Další →
         </button>
@@ -256,15 +353,19 @@ function CardsView({ day, subject }: { day: DayPlan; subject: string }) {
   )
 }
 
-// ── Game tab (pair matching) ───────────────────────────────────────────────────
+// ── Matching game ──────────────────────────────────────────────────────────────
 
-function GameView({ day, subject }: { day: DayPlan; subject: string }) {
+function GameView({
+  day, aiContent, aiLoading,
+}: {
+  day: DayPlan
+  aiContent: LessonContent | null
+  aiLoading: boolean
+}) {
+  const rawCards = aiContent?.flashcardPrompt ?? day.flashcardPrompt ?? []
   const pairs = useMemo(() =>
-    ((day.flashcardPrompt?.length ?? 0) > 0 ? day.flashcardPrompt! : fallbackCards(subject, day.title))
-      .map(parseCard)
-      .filter(c => c.def.length > 0)
-      .slice(0, 5),
-  [day, subject])
+    rawCards.map(parseCard).filter(c => c.def.length > 0).slice(0, 6),
+  [rawCards])
 
   const [shuffledDefs, setShuffledDefs] = useState<{ idx: number; text: string }[]>([])
   const [selected,     setSelected]     = useState<{ type: 'term' | 'def'; idx: number } | null>(null)
@@ -272,24 +373,18 @@ function GameView({ day, subject }: { day: DayPlan; subject: string }) {
   const [wrongPair,    setWrongPair]    = useState<[number, number] | null>(null)
   const [done,         setDone]         = useState(false)
 
-  useEffect(() => {
-    const defs = pairs.map((p, i) => ({ idx: i, text: p.def }))
+  const shuffle = (ps: typeof pairs) => {
+    const defs = ps.map((p, i) => ({ idx: i, text: p.def }))
     for (let i = defs.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [defs[i], defs[j]] = [defs[j], defs[i]]
     }
     setShuffledDefs(defs)
-  }, [pairs])
-
-  const reset = () => {
-    const defs = pairs.map((p, i) => ({ idx: i, text: p.def }))
-    for (let i = defs.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [defs[i], defs[j]] = [defs[j], defs[i]]
-    }
-    setShuffledDefs(defs)
-    setMatched([]); setSelected(null); setWrongPair(null); setDone(false)
   }
+
+  useEffect(() => { shuffle(pairs); setMatched([]); setSelected(null); setWrongPair(null); setDone(false) }, [pairs.length])
+
+  const reset = () => { shuffle(pairs); setMatched([]); setSelected(null); setWrongPair(null); setDone(false) }
 
   const handleSelect = (type: 'term' | 'def', idx: number) => {
     if (matched.includes(idx)) return
@@ -310,6 +405,20 @@ function GameView({ day, subject }: { day: DayPlan; subject: string }) {
     setSelected(null)
   }
 
+  if (aiLoading && !pairs.length) {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        {Array.from({ length: 10 }).map((_, i) => (
+          <div key={i} style={{ height: 48, borderRadius: 12, background: 'rgba(255,255,255,0.04)', animation: 'pub-fadeUp 1.4s ease-in-out infinite alternate', animationDelay: `${i * 0.08}s` }} />
+        ))}
+      </div>
+    )
+  }
+
+  if (!pairs.length) return (
+    <div style={{ textAlign: 'center', padding: '60px 24px', color: MUT, fontSize: 14 }}>Hra není k dispozici.</div>
+  )
+
   if (done) return (
     <div style={{ textAlign: 'center', padding: '64px 24px' }}>
       <div style={{ fontSize: 52, marginBottom: 16 }}>🏆</div>
@@ -328,7 +437,6 @@ function GameView({ day, subject }: { day: DayPlan; subject: string }) {
         Spáruj pojmy s definicemi — klikni na pojem, pak na odpovídající definici.
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        {/* Terms column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {pairs.map((p, i) => {
             const isMatched  = matched.includes(i)
@@ -347,8 +455,6 @@ function GameView({ day, subject }: { day: DayPlan; subject: string }) {
             )
           })}
         </div>
-
-        {/* Definitions column (shuffled) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {shuffledDefs.map(({ idx: di, text }) => {
             const isMatched  = matched.includes(di)
@@ -374,30 +480,26 @@ function GameView({ day, subject }: { day: DayPlan; subject: string }) {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
-const TABS: { key: Tab; emoji: string; label: string }[] = [
-  { key: 'study', emoji: '📖', label: 'Studium' },
-  { key: 'kviz',  emoji: '🧩', label: 'Kvíz'    },
-  { key: 'karty', emoji: '🃏', label: 'Karty'   },
-  { key: 'hra',   emoji: '🕹️', label: 'Hra'      },
-]
-
 export default function LessonPage() {
   const params   = useParams()
   const id       = params?.id       as string
   const lessonId = params?.lessonId as string
 
-  const [plan,    setPlan]    = useState<FullPlan | null>(null)
-  const [day,     setDay]     = useState<DayPlan  | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [tab,     setTab]     = useState<Tab>('study')
+  const [plan,      setPlan]      = useState<FullPlan | null>(null)
+  const [day,       setDay]       = useState<DayPlan  | null>(null)
+  const [loading,   setLoading]   = useState(true)
+  const [tab,       setTab]       = useState<Tab>('study')
+  const [aiContent, setAiContent] = useState<LessonContent | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
 
-  // Read ?act= from URL without useSearchParams (avoids Suspense wrapper requirement)
+  // Read ?act= from URL to pre-select tab (avoids Suspense requirement of useSearchParams)
   useEffect(() => {
     const sp  = new URLSearchParams(window.location.search)
     const act = sp.get('act') as Tab | null
     if (act && TABS.some(t => t.key === act)) setTab(act)
   }, [])
 
+  // Load plan from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(`teachio:plan:${id}`)
@@ -411,6 +513,49 @@ export default function LessonPage() {
     } catch {}
     setLoading(false)
   }, [id, lessonId])
+
+  // Fetch AI content — check localStorage cache first, then call API
+  useEffect(() => {
+    if (!plan || !day) return
+    const cacheKey = `teachio:lesson-content:${id}:${day.dayNumber}`
+
+    try {
+      const cached = localStorage.getItem(cacheKey)
+      if (cached) {
+        setAiContent(JSON.parse(cached) as LessonContent)
+        return
+      }
+    } catch {}
+
+    setAiLoading(true)
+    const ctrl = new AbortController()
+    const timeoutId = setTimeout(() => ctrl.abort(), 28_000)
+
+    fetch('/api/generate-lesson-content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject:     plan.subject,
+        lessonTitle: day.title,
+        phase:       day.phase,
+        mainTask:    day.mainTask,
+        dayNumber:   day.dayNumber,
+      }),
+      signal: ctrl.signal,
+    })
+      .then(r => r.json())
+      .then((data: LessonContent) => {
+        clearTimeout(timeoutId)
+        if (data.specificSteps?.length || data.podcast_script?.length) {
+          setAiContent(data)
+          try { localStorage.setItem(cacheKey, JSON.stringify(data)) } catch {}
+        }
+      })
+      .catch(() => {})
+      .finally(() => setAiLoading(false))
+
+    return () => { clearTimeout(timeoutId); ctrl.abort() }
+  }, [plan, day, id])
 
   if (loading) return (
     <PublicShell compact>
@@ -431,16 +576,15 @@ export default function LessonPage() {
     </PublicShell>
   )
 
-  const dl         = daysLeft(plan.examDate)
-  const totalDays  = plan.days?.length ?? 0
+  const dl        = daysLeft(plan.examDate)
+  const totalDays = plan.days?.length ?? 0
 
   return (
     <PublicShell compact>
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 24px 80px' }}>
 
-        {/* Back */}
         <Link href={`/studijni-plan/${id}`}
-          style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13, color: DIM, textDecoration: 'none', marginBottom: 24, transition: 'color 0.15s' }}>
+          style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13, color: DIM, textDecoration: 'none', marginBottom: 24 }}>
           ← Zpět na plán
         </Link>
 
@@ -466,12 +610,12 @@ export default function LessonPage() {
         </div>
 
         {/* Tab bar */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 28, padding: '4px', background: BG2, border: `1px solid ${BD}`, borderRadius: 14, width: 'fit-content' }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 28, padding: '4px', background: BG2, border: `1px solid ${BD}`, borderRadius: 14, overflowX: 'auto', width: 'fit-content', maxWidth: '100%' }}>
           {TABS.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               style={{
-                padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
                 background: tab === t.key ? 'linear-gradient(135deg,#6366f1,#7c3aed)' : 'transparent',
                 color:      tab === t.key ? '#fff' : MUT,
                 boxShadow:  tab === t.key ? '0 2px 10px rgba(124,58,237,0.35)' : 'none',
@@ -482,10 +626,11 @@ export default function LessonPage() {
         </div>
 
         {/* Tab content */}
-        {tab === 'study' && <StudyView day={day} subject={plan.subject} />}
-        {tab === 'kviz'  && <QuizView  day={day} subject={plan.subject} />}
-        {tab === 'karty' && <CardsView day={day} subject={plan.subject} />}
-        {tab === 'hra'   && <GameView  day={day} subject={plan.subject} />}
+        {tab === 'study'   && <StudyView   day={day} aiContent={aiContent} aiLoading={aiLoading} />}
+        {tab === 'podcast' && <PodcastTab  aiContent={aiContent} aiLoading={aiLoading} />}
+        {tab === 'kviz'    && <QuizView    day={day} aiContent={aiContent} aiLoading={aiLoading} />}
+        {tab === 'karty'   && <CardsView   day={day} aiContent={aiContent} aiLoading={aiLoading} />}
+        {tab === 'hra'     && <GameView    day={day} aiContent={aiContent} aiLoading={aiLoading} />}
 
         {/* Lesson navigation */}
         <div style={{ display: 'flex', gap: 10, marginTop: 40 }}>
